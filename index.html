@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Compare different ranking methods and discover how your priorities change based on the approach you use."
+    />
+    <title>RankIt - Compare Ranking Methods</title>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Header -->
+    <header role="banner">
+      <div class="container">
+        <div class="header-content">
+          <div class="header-left">
+            <button
+              id="backBtn"
+              class="btn btn-icon hidden"
+              aria-label="Go back to home screen"
+              title="Go back"
+            >
+              <i data-lucide="chevron-left" aria-hidden="true"></i>
+            </button>
+            <h1 class="logo">RankIt</h1>
+          </div>
+          <div class="header-actions">
+            <button
+              id="shareBtn"
+              class="btn btn-icon"
+              aria-label="Share your rankings"
+              title="Share your ranking"
+            >
+              <i data-lucide="share-2" aria-hidden="true"></i>
+            </button>
+            <button
+              id="clearBtn"
+              class="btn btn-icon btn-danger"
+              aria-label="Clear all data and start over"
+              title="Clear all data"
+            >
+              <i data-lucide="trash-2" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main role="main">
+      <!-- Home Screen -->
+      <div id="homeScreen" class="home-screen">
+        <div class="container">
+          <h2 class="home-title">Rank Anything, Any Way</h2>
+          <p class="home-subtitle">
+            Does the ranking method change your results?
+          </p>
+          <p class="home-description">
+            Rank the same list using different methods and compare the results.
+            Does a pairwise comparison give you different results than a tier
+            list, or a tournament bracket? Find out if your ranking method influences your decisions.
+          </p>
+
+          <div id="onboardingProgress" class="onboarding-progress" aria-live="polite">
+            <h3>Progress</h3>
+            <ul>
+              <li id="progressItems" class="incomplete">Enter items</li>
+              <li id="progressMethod" class="incomplete">Complete at least two methods</li>
+              <li id="progressCompare" class="incomplete">
+                <a id="progressCompareLink" class="progress-link" href="#">
+                  Compare rankings
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <!-- Input Section -->
+          <section id="inputSection" class="card" aria-labelledby="inputTitle">
+            <h2 id="inputTitle">Add Your Items</h2>
+
+            <!-- Input Mode -->
+            <div id="inputMode">
+              <div class="form-group">
+                <div
+                  id="templateButtonsContainer"
+                  class="template-buttons"
+                  role="group"
+                  aria-label="Template options"
+                ></div>
+              </div>
+
+              <div class="form-group">
+                <label for="itemsInput" class="form-label">
+                  Enter items (comma-separated)
+                  <span class="form-hint">Enter 3-20 items to rank</span>
+                </label>
+                <textarea
+                  id="itemsInput"
+                  rows="6"
+                  placeholder="Family, Health, Career, Adventure, Friends, Travel"
+                  aria-describedby="itemsInputHint itemsError"
+                  maxlength="1000"
+                ></textarea>
+                <div id="itemsError" class="form-error hidden" role="alert"></div>
+
+                <div id="itemsPreview" class="items-chip-container" aria-live="polite" aria-label="Live preview of items"></div>
+
+                <button
+                  id="startRankingBtn"
+                  class="btn btn-primary btn-block"
+                  aria-label="Submit items and begin ranking"
+                >
+                  Submit Items
+                </button>
+              </div>
+            </div>
+
+            <!-- Display Mode -->
+            <div id="displayMode" class="hidden">
+              <div
+                id="itemsDisplay"
+                class="items-chip-container"
+                role="list"
+                aria-label="Your submitted items"
+              ></div>
+            </div>
+          </section>
+
+          <!-- Mode Selection Grid -->
+          <section
+            aria-labelledby="rankingMethodsTitle"
+            class="ranking-methods-section"
+          >
+            <h2 id="rankingMethodsTitle" class="sr-only">Ranking Methods</h2>
+
+            <div
+              class="mode-grid"
+              id="modeGrid"
+              role="group"
+              aria-label="Available ranking methods"
+            >
+              <article
+                class="mode-card"
+                data-mode="pairwise"
+                tabindex="0"
+                role="button"
+                aria-label="Pairwise Ranking method"
+              >
+                <div class="mode-icon purple" aria-hidden="true">
+                  <i
+                    data-lucide="arrow-left-right"
+                    class="icon-lg icon-white"
+                  ></i>
+                </div>
+                <h3>Pairwise Ranking</h3>
+                <p>Compare items two at a time using the Elo rating system</p>
+                <span class="mode-tip">Best for 4-10 items</span>
+              </article>
+
+              <article
+                class="mode-card"
+                data-mode="drag"
+                tabindex="0"
+                role="button"
+                aria-label="Drag to Rank method"
+              >
+                <div class="mode-icon blue" aria-hidden="true">
+                  <i data-lucide="grip-vertical" class="icon-lg icon-white"></i>
+                </div>
+                <h3>Drag to Rank</h3>
+                <p>Manually order items by dragging them into position</p>
+                <span class="mode-tip">Quick & intuitive</span>
+              </article>
+
+              <article
+                class="mode-card"
+                data-mode="tier"
+                tabindex="0"
+                role="button"
+                aria-label="Tier List method"
+              >
+                <div class="mode-icon green" aria-hidden="true">
+                  <i data-lucide="layers" class="icon-lg icon-white"></i>
+                </div>
+                <h3>Tier List</h3>
+                <p>Group items into S, A, B, C, D tiers</p>
+                <span class="mode-tip">Great for categories</span>
+              </article>
+
+              <article
+                class="mode-card"
+                data-mode="budget"
+                tabindex="0"
+                role="button"
+                aria-label="Budget Allocation method"
+              >
+                <div
+                  class="mode-icon"
+                  style="background: linear-gradient(135deg, #f59e0b, #d97706)"
+                  aria-hidden="true"
+                >
+                  <i data-lucide="pie-chart" class="icon-lg icon-white"></i>
+                </div>
+                <h3>Budget Allocation</h3>
+                <p>Distribute a fixed budget ($100) across your items</p>
+                <span class="mode-tip">Shows relative importance</span>
+              </article>
+
+              <article
+                class="mode-card"
+                data-mode="tournament"
+                tabindex="0"
+                role="button"
+                aria-label="Tournament Bracket method"
+              >
+                <div
+                  class="mode-icon"
+                  style="background: linear-gradient(135deg, #ef4444, #b91c1c)"
+                  aria-hidden="true"
+                >
+                  <i data-lucide="trophy" class="icon-lg icon-white"></i>
+                </div>
+                <h3>Tournament Bracket</h3>
+                <p>Single-elimination face-offs until one winner remains</p>
+                <span class="mode-tip">Fun & competitive</span>
+              </article>
+
+              <article
+                class="mode-card"
+                data-mode="smart"
+                tabindex="0"
+                role="button"
+                aria-label="Smart Sort method"
+              >
+                <div
+                  class="mode-icon"
+                  style="background: linear-gradient(135deg, #6366f1, #4f46e5)"
+                  aria-hidden="true"
+                >
+                  <i data-lucide="brain-circuit" class="icon-lg icon-white"></i>
+                </div>
+                <h3>Smart Sort</h3>
+                <p>
+                  Vote by pairs, but with intelligent ranking for fewer
+                  comparisons (Merge Sort)
+                </p>
+                <span class="mode-tip">Efficient for many items</span>
+              </article>
+              <article
+                class="mode-card mode-card-full"
+                data-mode="elimination"
+                tabindex="0"
+                role="button"
+                aria-label="Vote Off The Island method"
+              >
+                <div
+                  class="mode-icon"
+                  style="background: linear-gradient(135deg, #ef4444, #f97316)"
+                  aria-hidden="true"
+                >
+                  <i data-lucide="ship-wheel" class="icon-lg icon-white"></i>
+                </div>
+                <h3>Vote Off The Island</h3>
+                <p>
+                  Eliminate items one by one to determine the ultimate #1
+                  survivor
+                </p>
+                <span class="mode-tip">Reverse-psychology approach</span>
+              </article>
+            </div>
+          </section>
+
+          <!--Compare Results Section-->
+          <section
+            id="compareResultsSection"
+            class="compare-results-section"
+            aria-label="Compare results"
+          >
+            <div class="compare-header">
+              <button
+                id="compareResultsBtn"
+                class="btn btn-primary btn-large"
+                aria-label="View comparison of all completed rankings"
+                title="Complete at least 2 ranking methods to compare results"
+                aria-disabled="true"
+              >
+                <i data-lucide="bar-chart-3" class="icon" aria-hidden="true"></i>
+                <span id="compareBtnLabel">Compare All Results</span>
+              </button>
+
+              <span id="compareCounter" class="compare-counter" aria-live="polite">
+                0 / 2 complete
+              </span>
+            </div>
+
+            <p id="compareResultsHint" class="compare-hint text-muted hidden" aria-live="polite">
+              Complete at least 2 ranking methods to compare results.
+            </p>
+          </section>
+        </div>
+      </div>
+
+      <!-- Pairwise Ranking Screen -->
+      <div
+        id="pairwiseScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Pairwise ranking interface"
+      >
+        <div class="container">
+          <div class="progress-bar-container" role="status" aria-live="polite">
+            <div class="progress-badge">
+              <span id="progressText">0 / 0 comparisons</span>
+            </div>
+            <div
+              class="progress-bar"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+          </div>
+
+          <div
+            id="comparisonArea"
+            role="region"
+            aria-label="Comparison choices"
+          ></div>
+          <div id="actionButtonsArea" class="action-buttons"></div>
+          <div
+            id="liveRankingsArea"
+            class="rankings-container hidden"
+            role="region"
+            aria-label="Current rankings"
+            aria-live="polite"
+          ></div>
+        </div>
+      </div>
+
+      <!-- Tier List Screen -->
+      <div
+        id="tierScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Tier list interface"
+      >
+        <div class="container">
+          <div class="card">
+            <h2>Create Your Tier List</h2>
+            <p class="text-muted">
+              Drag items into tiers (S is best, D is worst)
+            </p>
+          </div>
+
+          <div
+            id="unplacedItemsArea"
+            class="unplaced-items"
+            role="region"
+            aria-label="Unplaced items"
+          ></div>
+          <div id="tierListArea" role="region" aria-label="Tier list"></div>
+
+          <div class="action-buttons">
+            <button id="saveTierBtn" class="btn btn-primary">
+              Save & Return to Home
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Drag Rank Screen -->
+      <div
+        id="dragScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Drag to rank interface"
+      >
+        <div class="container">
+          <div class="card">
+            <h2>Drag to Rank</h2>
+            <p class="text-muted">
+              Drag items to reorder them from best (#1) to worst
+            </p>
+
+            <ul
+              id="dragRankList"
+              class="drag-rank-list"
+              role="list"
+              aria-label="Ranked items"
+            ></ul>
+
+            <div class="action-buttons">
+              <button id="saveDragBtn" class="btn btn-primary">
+                Save & Return to Home
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Budget Allocation Screen -->
+      <div
+        id="budgetScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Budget allocation interface"
+      >
+        <div class="container">
+          <div class="card">
+            <div class="text-center">
+              <h2
+                id="budgetRemainingTitle"
+                class="budget-title"
+                role="status"
+                aria-live="polite"
+              >
+                $100 Remaining
+              </h2>
+              <p class="text-muted">
+                Allocate your budget. You must use exactly $100.
+              </p>
+            </div>
+          </div>
+
+          <div id="budgetContainer" class="budget-container"></div>
+
+          <div class="action-buttons">
+            <button id="saveBudgetBtn" class="btn btn-primary">
+              Save & Return to Home
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tournament Bracket Screen -->
+      <div
+        id="tournamentScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Tournament bracket interface"
+      >
+        <div class="container">
+          <div class="card">
+            <h2>Tournament Mode</h2>
+            <p class="text-muted">
+              Select the winner to advance them to the next round
+            </p>
+          </div>
+
+          <div
+            id="bracketContainer"
+            class="bracket-container"
+            role="region"
+            aria-label="Tournament bracket"
+          ></div>
+
+          <div id="tournamentActionButtons" class="action-buttons">
+            <button id="tournamentResetBtn" class="btn btn-danger">
+              <i data-lucide="rotate-ccw" class="icon" aria-hidden="true"></i>
+              Reset Tournament
+            </button>
+          </div>
+
+          <div
+            id="tournamentWinnerArea"
+            class="hidden text-center"
+            role="status"
+            aria-live="polite"
+          ></div>
+        </div>
+      </div>
+
+      <!-- Smart Sort Screen -->
+      <div
+        id="smartScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Smart sort interface"
+      >
+        <div class="container">
+          <div class="progress-bar-container" role="status" aria-live="polite">
+            <div class="progress-badge">
+              <span id="smartProgressText">Sorting...</span>
+            </div>
+            <div
+              class="progress-bar"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <div id="smartProgressFill" class="progress-fill"></div>
+            </div>
+          </div>
+
+          <div id="smartContextArea" class="smart-context">
+            <h3 class="smart-context-title">Sorting Stage: Merging Lists</h3>
+            <div id="mergeListsDisplay" class="merge-lists-display"></div>
+          </div>
+
+          <div
+            id="smartComparisonArea"
+            role="region"
+            aria-label="Comparison choices"
+          ></div>
+
+          <div class="action-buttons">
+            <button id="smartUndoBtn" class="btn btn-blue hidden">
+              <i data-lucide="rotate-ccw" class="icon" aria-hidden="true"></i>
+              Undo
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Elimination Screen -->
+      <div
+        id="eliminationScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Vote off the island interface"
+      >
+        <div class="container">
+          <div class="card">
+            <h2>Vote Off The Island 🏝️</h2>
+            <p class="text-muted">
+              Round <span id="eliminationRoundNumber">1</span>: Which item is
+              the next to be eliminated? (The last item remaining is your #1
+              favorite.)
+            </p>
+
+            <div
+              id="eliminationGridArea"
+              class="mode-grid"
+              role="group"
+              aria-label="Items to eliminate"
+            ></div>
+
+            <div
+              id="eliminationFinalResult"
+              class="text-center hidden"
+              role="status"
+              aria-live="polite"
+            ></div>
+
+            <div class="action-buttons">
+              <button id="eliminationUndoBtn" class="btn btn-blue hidden">
+                <i data-lucide="rotate-ccw" class="icon" aria-hidden="true"></i>
+                Undo
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results Comparison Screen -->
+      <div
+        id="resultsScreen"
+        class="ranking-screen hidden"
+        role="region"
+        aria-label="Results comparison"
+      >
+        <div class="container">
+          <div class="card">
+            <h2>Compare Your Rankings</h2>
+            <p class="text-muted">
+              See how different ranking methods influenced your results. Do your
+              top priorities change based on how you ranked them?
+            </p>
+
+            <!-- ---------- Summary + Discrepancy Overview ---------- -->
+            <section class="results-summary">
+              <div class="results-summary-header">
+                <div>
+                  <h3>At a glance</h3>
+                  <p class="text-muted">
+                    Consensus ranking shows which items are strongest across all completed methods.
+                  </p>
+                </div>
+                <div class="results-summary-meta">
+                  <div class="summary-meta-item">
+                    <span class="summary-meta-label">Methods completed</span>
+                    <span id="resultsMethodCount" class="summary-meta-value">0</span>
+                  </div>
+                  <div class="consistency-toggle">
+                    <span class="summary-meta-label">View</span>
+                    <button type="button" class="toggle-btn active" data-mode="consistent">
+                      Most consistent
+                    </button>
+                    <button type="button" class="toggle-btn" data-mode="volatile">
+                      Most volatile
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                id="summaryAndVolatilityArea"
+                class="comparison-grid-results"
+              ></div>
+            </section>
+
+            <!-- ---------- Visual Comparison Charts ---------- -->
+            <section class="results-visuals">
+              <div id="heatmapArea" class="visual-card">
+                <h3>Ranking Heatmap 🔥</h3>
+                <p class="chart-caption">
+                  Compare the relative ranking of each item across methods.
+                </p>
+                <div id="heatmapContainer" class="heatmap-container"></div>
+              </div>
+
+              <div id="rankFlowArea" class="visual-card">
+                <h3>Rank Flow Diagram 📈</h3>
+                <p class="chart-caption">
+                  Shows the movement of each item's rank across methods.
+                </p>
+                <div class="chart-container">
+                  <canvas
+                    id="rankFlowChart"
+                    role="img"
+                    aria-label="Line chart showing rank changes across methods"
+                  ></canvas>
+                </div>
+              </div>
+
+              <div id="scatterPlotArea" class="visual-card">
+                <h3>Method-to-Method Comparison ⚪</h3>
+                <p class="chart-caption">
+                  Compare the relationship between two specific methods.
+                </p>
+                <div class="chart-controls">
+                  <label for="scatterXAxis" class="sr-only">X-axis method</label>
+                  <select
+                    id="scatterXAxis"
+                    class="select-input"
+                    aria-label="Select method for X axis"
+                  ></select>
+
+                  <label for="scatterYAxis" class="sr-only">Y-axis method</label>
+                  <select
+                    id="scatterYAxis"
+                    class="select-input"
+                    aria-label="Select method for Y axis"
+                  ></select>
+                </div>
+                <div class="chart-container">
+                  <canvas
+                    id="scatterPlotChart"
+                    role="img"
+                    aria-label="Scatter plot comparing two ranking methods"
+                  ></canvas>
+                </div>
+              </div>
+            </section>
+
+            <!-- ---------- Detailed Results + Actions ---------- -->
+            <section class="results-details">
+              <h3>Drill down into each method</h3>
+              <p class="text-muted">
+                See the exact ranks and scores per method, then export your data.
+              </p>
+
+              <div id="aggregatedResultsTable" class="visual-card"></div>
+
+              <div id="detailedRankGrid" class="comparison-grid-results"></div>
+
+              <div class="action-buttons">
+                <button id="newRankingBtn" class="btn btn-primary">
+                  Back to Home
+                </button>
+                <button id="exportComparisonBtn" class="btn btn-blue">
+                  <i data-lucide="download" class="icon" aria-hidden="true"></i>
+                  Export Comparison
+                </button>
+              </div>
+            </section>
+
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer role="contentinfo" class="site-footer">
+      <div class="container">
+        <p class="elegant-font">
+          Made with 🧠 by
+          <a
+            href="https://www.kylescheer.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="footer-link"
+          >
+            Kyle Scheer
+          </a>
+        </p>
+
+        <p>
+          <a
+            href="https://ko-fi.com/scheerapps"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="footer-link"
+          >
+            Support on Ko-fi
+          </a>
+        </p>
+
+        <p>
+          <a
+            href="https://github.com/kyletscheer/rankit"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="footer-link"
+          >
+            View Code on GitHub
+          </a>
+        </p>
+      </div>
+    </footer>
+
+    <!-- Share Link Modal -->
+    <div id="shareDialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shareDialogTitle">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="shareDialogTitle">Share Your Rankings</h2>
+          <button class="modal-close" id="shareDialogClose" aria-label="Close">✕</button>
+        </div>
+        <p class="modal-text">
+          Anyone with this link can load your ranking results.
+          (It encodes your items and completed results.)
+        </p>
+        <div class="modal-body">
+          <input id="shareLinkInput" class="input-text" readonly />
+          <button id="copyShareLinkBtn" class="btn btn-primary">Copy Link</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div
+      id="notification"
+      class="notification hidden"
+      role="alert"
+      aria-live="assertive"
+    ></div>
+
+    <!-- Scripts -->
+    <script src="template.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
