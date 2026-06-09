@@ -5,10 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Compare different ranking methods and discover how your priorities change based on the approach you use."
+      content="Rank personal decisions from multiple angles, compare what stays stable, and understand which choices depend on the method."
     />
-    <title>RankIt - Compare Ranking Methods</title>
-    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="canonical" href="https://kyletscheer.github.io/rankit/" />
+
+    <meta property="og:title" content="RankIt - Private Decision Workspace" />
+    <meta
+      property="og:description"
+      content="Compare your options through multiple ranking methods and see which choices are robust versus method-dependent."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://kyletscheer.github.io/rankit/" />
+    <meta property="og:site_name" content="RankIt" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="RankIt - Private Decision Workspace" />
+    <meta
+      name="twitter:description"
+      content="A browser-only decision tool for ranking options from multiple angles."
+    />
+
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <title>RankIt - Private Decision Workspace</title>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.553.0/dist/umd/lucide.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -32,8 +52,8 @@
             <button
               id="shareBtn"
               class="btn btn-icon"
-              aria-label="Share your rankings"
-              title="Share your ranking"
+              aria-label="Share this decision"
+              title="Share this decision"
             >
               <i data-lucide="share-2" aria-hidden="true"></i>
             </button>
@@ -55,35 +75,46 @@
       <!-- Home Screen -->
       <div id="homeScreen" class="home-screen">
         <div class="container">
-          <h2 class="home-title">Rank Anything, Any Way</h2>
-          <p class="home-subtitle">
-            Does the ranking method change your results?
-          </p>
-          <p class="home-description">
-            Rank the same list using different methods and compare the results.
-            Does a pairwise comparison give you different results than a tier
-            list, or a tournament bracket? Find out if your ranking method influences your decisions.
-          </p>
+          <section class="workspace-intro" aria-labelledby="workspaceTitle">
+            <div>
+              <p class="eyebrow">Private decision workspace</p>
+              <h2 id="workspaceTitle" class="home-title">
+                Make Better Personal Decisions
+              </h2>
+              <p class="home-description">
+                Define your options, rank them a few different ways, then see
+                which choices stay stable and which depend on the method.
+              </p>
+            </div>
+            <div class="workspace-promise">
+              <span>Browser-only</span>
+              <span>No account</span>
+              <span>Export anytime</span>
+            </div>
+          </section>
 
-          <div id="onboardingProgress" class="onboarding-progress" aria-live="polite">
-            <h3>Progress</h3>
-            <ul>
-              <li id="progressItems" class="incomplete">Enter items</li>
-              <li id="progressMethod" class="incomplete">Complete at least two methods</li>
-              <li id="progressCompare" class="incomplete">
-                <a id="progressCompareLink" class="progress-link" href="#">
-                  Compare rankings
-                </a>
-              </li>
-            </ul>
-          </div>
+          <div class="decision-workspace">
+            <div class="workspace-main">
 
           <!-- Input Section -->
           <section id="inputSection" class="card" aria-labelledby="inputTitle">
-            <h2 id="inputTitle">Add Your Items</h2>
+            <h2 id="inputTitle">Set Up Your Decision</h2>
 
             <!-- Input Mode -->
             <div id="inputMode">
+              <div class="form-group">
+                <label for="decisionTitleInput" class="form-label">
+                  Decision name
+                  <span class="form-hint">Optional, but useful for exports and share links</span>
+                </label>
+                <input
+                  id="decisionTitleInput"
+                  type="text"
+                  maxlength="120"
+                  placeholder="Where should I travel next?"
+                />
+              </div>
+
               <div class="form-group">
                 <div
                   id="templateButtonsContainer"
@@ -105,9 +136,23 @@
                   aria-describedby="itemsInputHint itemsError"
                   maxlength="1000"
                 ></textarea>
+                <div id="itemsInputHint" class="form-hint">
+                  Separate options with commas. You can edit them later.
+                </div>
                 <div id="itemsError" class="form-error hidden" role="alert"></div>
 
                 <div id="itemsPreview" class="items-chip-container" aria-live="polite" aria-label="Live preview of items"></div>
+
+                <label for="itemNotesInput" class="form-label item-notes-label">
+                  Optional notes
+                  <span class="form-hint">One per line, like “Paris: Best food and museums”</span>
+                </label>
+                <textarea
+                  id="itemNotesInput"
+                  rows="4"
+                  placeholder="Paris: Best food and museums&#10;Tokyo: Best culture fit"
+                  maxlength="2000"
+                ></textarea>
 
                 <button
                   id="startRankingBtn"
@@ -121,6 +166,7 @@
 
             <!-- Display Mode -->
             <div id="displayMode" class="hidden">
+              <div id="decisionDisplay" class="decision-display"></div>
               <div
                 id="itemsDisplay"
                 class="items-chip-container"
@@ -128,14 +174,70 @@
                 aria-label="Your submitted items"
               ></div>
             </div>
+
+            <div class="project-actions">
+              <button id="homeExportProjectBtn" class="btn btn-secondary" type="button">
+                <i data-lucide="file-down" class="icon" aria-hidden="true"></i>
+                Export Project
+              </button>
+              <label class="btn btn-secondary import-project-label" for="homeImportProjectInput">
+                <i data-lucide="file-up" class="icon" aria-hidden="true"></i>
+                Import Project
+                <input
+                  id="homeImportProjectInput"
+                  class="sr-only"
+                  type="file"
+                  accept="application/json,.json"
+                />
+              </label>
+            </div>
           </section>
+            </div>
+
+            <aside class="workspace-side" aria-label="Decision progress and recommended methods">
+              <div id="onboardingProgress" class="onboarding-progress" aria-live="polite">
+                <h3>Progress</h3>
+                <ul>
+                  <li id="progressItems" class="incomplete">Define decision</li>
+                  <li id="progressMethod" class="incomplete">Try at least two methods</li>
+                  <li id="progressCompare" class="incomplete">
+                    <a id="progressCompareLink" class="progress-link" href="#">
+                      Review decision summary
+                    </a>
+                  </li>
+                </ul>
+              </div>
+
+              <section
+                id="recommendedMethodsSection"
+                class="recommended-methods-panel"
+                aria-labelledby="recommendedMethodsTitle"
+              >
+                <div class="section-heading">
+                  <p class="eyebrow">Recommended next</p>
+                  <h2 id="recommendedMethodsTitle">Start with these methods</h2>
+                </div>
+                <div id="recommendedModeGrid" class="recommended-methods-list"></div>
+              </section>
+
+              <div id="latestReflectionArea" class="latest-reflection-panel hidden"></div>
+            </aside>
+          </div>
 
           <!-- Mode Selection Grid -->
           <section
             aria-labelledby="rankingMethodsTitle"
             class="ranking-methods-section"
           >
-            <h2 id="rankingMethodsTitle" class="sr-only">Ranking Methods</h2>
+            <div class="section-heading section-heading-row">
+              <div>
+                <p class="eyebrow">All methods</p>
+                <h2 id="rankingMethodsTitle">Choose another angle</h2>
+              </div>
+              <p class="section-note">
+                Every method is available. Use several to find stable choices.
+              </p>
+            </div>
 
             <div
               class="mode-grid"
@@ -150,7 +252,7 @@
                 role="button"
                 aria-label="Pairwise Ranking method"
               >
-                <div class="mode-icon purple" aria-hidden="true">
+                <div class="mode-icon" aria-hidden="true">
                   <i
                     data-lucide="arrow-left-right"
                     class="icon-lg icon-white"
@@ -168,12 +270,12 @@
                 role="button"
                 aria-label="Drag to Rank method"
               >
-                <div class="mode-icon blue" aria-hidden="true">
+                <div class="mode-icon" aria-hidden="true">
                   <i data-lucide="grip-vertical" class="icon-lg icon-white"></i>
                 </div>
                 <h3>Drag to Rank</h3>
                 <p>Manually order items by dragging them into position</p>
-                <span class="mode-tip">Quick & intuitive</span>
+                <span class="mode-tip">Quick and direct</span>
               </article>
 
               <article
@@ -183,7 +285,7 @@
                 role="button"
                 aria-label="Tier List method"
               >
-                <div class="mode-icon green" aria-hidden="true">
+                <div class="mode-icon" aria-hidden="true">
                   <i data-lucide="layers" class="icon-lg icon-white"></i>
                 </div>
                 <h3>Tier List</h3>
@@ -198,15 +300,11 @@
                 role="button"
                 aria-label="Budget Allocation method"
               >
-                <div
-                  class="mode-icon"
-                  style="background: linear-gradient(135deg, #f59e0b, #d97706)"
-                  aria-hidden="true"
-                >
+                <div class="mode-icon" aria-hidden="true">
                   <i data-lucide="pie-chart" class="icon-lg icon-white"></i>
                 </div>
                 <h3>Budget Allocation</h3>
-                <p>Distribute a fixed budget ($100) across your items</p>
+                <p>Distribute a fixed budget of $100 across your items</p>
                 <span class="mode-tip">Shows relative importance</span>
               </article>
 
@@ -217,16 +315,12 @@
                 role="button"
                 aria-label="Tournament Bracket method"
               >
-                <div
-                  class="mode-icon"
-                  style="background: linear-gradient(135deg, #ef4444, #b91c1c)"
-                  aria-hidden="true"
-                >
+                <div class="mode-icon" aria-hidden="true">
                   <i data-lucide="trophy" class="icon-lg icon-white"></i>
                 </div>
                 <h3>Tournament Bracket</h3>
                 <p>Single-elimination face-offs until one winner remains</p>
-                <span class="mode-tip">Fun & competitive</span>
+                <span class="mode-tip">Head-to-head format</span>
               </article>
 
               <article
@@ -236,11 +330,7 @@
                 role="button"
                 aria-label="Smart Sort method"
               >
-                <div
-                  class="mode-icon"
-                  style="background: linear-gradient(135deg, #6366f1, #4f46e5)"
-                  aria-hidden="true"
-                >
+                <div class="mode-icon" aria-hidden="true">
                   <i data-lucide="brain-circuit" class="icon-lg icon-white"></i>
                 </div>
                 <h3>Smart Sort</h3>
@@ -257,19 +347,14 @@
                 role="button"
                 aria-label="Vote Off The Island method"
               >
-                <div
-                  class="mode-icon"
-                  style="background: linear-gradient(135deg, #ef4444, #f97316)"
-                  aria-hidden="true"
-                >
+                <div class="mode-icon" aria-hidden="true">
                   <i data-lucide="ship-wheel" class="icon-lg icon-white"></i>
                 </div>
                 <h3>Vote Off The Island</h3>
                 <p>
-                  Eliminate items one by one to determine the ultimate #1
-                  survivor
+                  Remove the weakest item each round until one top choice remains
                 </p>
-                <span class="mode-tip">Reverse-psychology approach</span>
+                <span class="mode-tip">Elimination approach</span>
               </article>
             </div>
           </section>
@@ -278,19 +363,19 @@
           <section
             id="compareResultsSection"
             class="compare-results-section"
-            aria-label="Compare results"
+            aria-label="Decision summary"
           >
             <div class="compare-header">
-              <button
-                id="compareResultsBtn"
-                class="btn btn-primary btn-large"
-                aria-label="View comparison of all completed rankings"
-                title="Complete at least 2 ranking methods to compare results"
-                aria-disabled="true"
-              >
-                <i data-lucide="bar-chart-3" class="icon" aria-hidden="true"></i>
-                <span id="compareBtnLabel">Compare All Results</span>
-              </button>
+                <button
+                  id="compareResultsBtn"
+                  class="btn btn-primary btn-large"
+                  aria-label="View comparison of all completed rankings"
+                  title="Complete at least 2 ranking methods to compare results"
+                  aria-disabled="true"
+                >
+                  <i data-lucide="bar-chart-3" class="icon" aria-hidden="true"></i>
+                <span id="compareBtnLabel">Open Decision Summary</span>
+                </button>
 
               <span id="compareCounter" class="compare-counter" aria-live="polite">
                 0 / 2 complete
@@ -298,7 +383,7 @@
             </div>
 
             <p id="compareResultsHint" class="compare-hint text-muted hidden" aria-live="polite">
-              Complete at least 2 ranking methods to compare results.
+              Complete at least 2 ranking methods to review a decision summary.
             </p>
           </section>
         </div>
@@ -312,6 +397,7 @@
         aria-label="Pairwise ranking interface"
       >
         <div class="container">
+          <div id="pairwiseMethodHeader" class="method-screen-header"></div>
           <div class="progress-bar-container" role="status" aria-live="polite">
             <div class="progress-badge">
               <span id="progressText">0 / 0 comparisons</span>
@@ -351,6 +437,7 @@
         aria-label="Tier list interface"
       >
         <div class="container">
+          <div id="tierMethodHeader" class="method-screen-header"></div>
           <div class="card">
             <h2>Create Your Tier List</h2>
             <p class="text-muted">
@@ -382,6 +469,7 @@
         aria-label="Drag to rank interface"
       >
         <div class="container">
+          <div id="dragMethodHeader" class="method-screen-header"></div>
           <div class="card">
             <h2>Drag to Rank</h2>
             <p class="text-muted">
@@ -412,6 +500,7 @@
         aria-label="Budget allocation interface"
       >
         <div class="container">
+          <div id="budgetMethodHeader" class="method-screen-header"></div>
           <div class="card">
             <div class="text-center">
               <h2
@@ -446,6 +535,7 @@
         aria-label="Tournament bracket interface"
       >
         <div class="container">
+          <div id="tournamentMethodHeader" class="method-screen-header"></div>
           <div class="card">
             <h2>Tournament Mode</h2>
             <p class="text-muted">
@@ -484,6 +574,7 @@
         aria-label="Smart sort interface"
       >
         <div class="container">
+          <div id="smartMethodHeader" class="method-screen-header"></div>
           <div class="progress-bar-container" role="status" aria-live="polite">
             <div class="progress-badge">
               <span id="smartProgressText">Sorting...</span>
@@ -527,12 +618,12 @@
         aria-label="Vote off the island interface"
       >
         <div class="container">
+          <div id="eliminationMethodHeader" class="method-screen-header"></div>
           <div class="card">
-            <h2>Vote Off The Island 🏝️</h2>
+            <h2>Vote Off The Island</h2>
             <p class="text-muted">
               Round <span id="eliminationRoundNumber">1</span>: Which item is
-              the next to be eliminated? (The last item remaining is your #1
-              favorite.)
+              the next to eliminate? The last item remaining is your top choice.
             </p>
 
             <div
@@ -564,23 +655,24 @@
         id="resultsScreen"
         class="ranking-screen hidden"
         role="region"
-        aria-label="Results comparison"
+        aria-label="Decision summary"
       >
         <div class="container">
           <div class="card">
-            <h2>Compare Your Rankings</h2>
+            <h2>Decision Summary</h2>
             <p class="text-muted">
-              See how different ranking methods influenced your results. Do your
-              top priorities change based on how you ranked them?
+              See which choices are robust, which are method-sensitive, and
+              what each ranking method revealed.
             </p>
 
             <!-- ---------- Summary + Discrepancy Overview ---------- -->
-            <section class="results-summary">
+            <section class="results-summary answer-first">
               <div class="results-summary-header">
                 <div>
-                  <h3>At a glance</h3>
+                  <h3 id="decisionSummaryTitle">At a glance</h3>
                   <p class="text-muted">
-                    Consensus ranking shows which items are strongest across all completed methods.
+                    Plain-language takeaways appear first; charts and tables
+                    are below for deeper review.
                   </p>
                 </div>
                 <div class="results-summary-meta">
@@ -600,16 +692,39 @@
                 </div>
               </div>
 
+              <div id="decisionInsightsArea" class="insight-grid"></div>
+
               <div
                 id="summaryAndVolatilityArea"
-                class="comparison-grid-results"
+                class="comparison-grid-results supporting-summary"
               ></div>
+
+              <div class="reflection-panel">
+                <label for="decisionNoteInput" class="form-label">
+                  Final decision note
+                  <span class="form-hint">Optional reflection to keep with this project</span>
+                </label>
+                <textarea
+                  id="decisionNoteInput"
+                  rows="4"
+                  placeholder="What did you decide, and why?"
+                ></textarea>
+              </div>
             </section>
 
             <!-- ---------- Visual Comparison Charts ---------- -->
-            <section class="results-visuals">
+            <section class="results-visuals evidence-section">
+              <div class="section-heading section-heading-row">
+                <div>
+                  <p class="eyebrow">Evidence</p>
+                  <h3>How the methods compare</h3>
+                </div>
+                <p class="section-note">
+                  Use these views to inspect the summary above.
+                </p>
+              </div>
               <div id="heatmapArea" class="visual-card">
-                <h3>Ranking Heatmap 🔥</h3>
+                <h3>Ranking Heatmap</h3>
                 <p class="chart-caption">
                   Compare the relative ranking of each item across methods.
                 </p>
@@ -617,7 +732,7 @@
               </div>
 
               <div id="rankFlowArea" class="visual-card">
-                <h3>Rank Flow Diagram 📈</h3>
+                <h3>Rank Flow Diagram</h3>
                 <p class="chart-caption">
                   Shows the movement of each item's rank across methods.
                 </p>
@@ -631,7 +746,7 @@
               </div>
 
               <div id="scatterPlotArea" class="visual-card">
-                <h3>Method-to-Method Comparison ⚪</h3>
+                <h3>Method-to-Method Comparison</h3>
                 <p class="chart-caption">
                   Compare the relationship between two specific methods.
                 </p>
@@ -662,7 +777,15 @@
 
             <!-- ---------- Detailed Results + Actions ---------- -->
             <section class="results-details">
-              <h3>Drill down into each method</h3>
+              <div class="section-heading section-heading-row">
+                <div>
+                  <p class="eyebrow">Next actions</p>
+                  <h3>Save, share, or keep ranking</h3>
+                </div>
+                <p class="section-note">
+                  Add another method if confidence is still low.
+                </p>
+              </div>
               <p class="text-muted">
                 See the exact ranks and scores per method, then export your data.
               </p>
@@ -677,7 +800,25 @@
                 </button>
                 <button id="exportComparisonBtn" class="btn btn-blue">
                   <i data-lucide="download" class="icon" aria-hidden="true"></i>
-                  Export Comparison
+                  Export CSV
+                </button>
+                <button id="exportProjectBtn" class="btn btn-secondary">
+                  <i data-lucide="file-down" class="icon" aria-hidden="true"></i>
+                  Export Project
+                </button>
+                <label class="btn btn-secondary import-project-label" for="importProjectInput">
+                  <i data-lucide="file-up" class="icon" aria-hidden="true"></i>
+                  Import Project
+                  <input
+                    id="importProjectInput"
+                    class="sr-only"
+                    type="file"
+                    accept="application/json,.json"
+                  />
+                </label>
+                <button id="copyProjectJsonBtn" class="btn btn-secondary">
+                  <i data-lucide="copy" class="icon" aria-hidden="true"></i>
+                  Copy JSON
                 </button>
               </div>
             </section>
@@ -691,7 +832,7 @@
     <footer role="contentinfo" class="site-footer">
       <div class="container">
         <p class="elegant-font">
-          Made with 🧠 by
+          Made by
           <a
             href="https://www.kylescheer.com"
             target="_blank"
@@ -730,12 +871,12 @@
     <div id="shareDialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shareDialogTitle">
       <div class="modal-content">
         <div class="modal-header">
-          <h2 id="shareDialogTitle">Share Your Rankings</h2>
+          <h2 id="shareDialogTitle">Share This Decision</h2>
           <button class="modal-close" id="shareDialogClose" aria-label="Close">✕</button>
         </div>
         <p class="modal-text">
-          Anyone with this link can load your ranking results.
-          (It encodes your items and completed results.)
+          Anyone with this link can load your decision, notes, and completed
+          ranking results. Everything is encoded in the link.
         </p>
         <div class="modal-body">
           <input id="shareLinkInput" class="input-text" readonly />

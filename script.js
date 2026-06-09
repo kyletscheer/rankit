@@ -1,6 +1,12 @@
 // THE BASICS
 // Initialize Lucide icons
-lucide.createIcons();
+function refreshIcons() {
+  if (window.lucide && typeof lucide.createIcons === "function") {
+    lucide.createIcons();
+  }
+}
+
+refreshIcons();
 
 // Merge Sort Helper Class
 class MergeSortManager {
@@ -81,6 +87,15 @@ let state = {
   items: [],
   itemsSubmitted: false,
   completedMethods: {},
+  lastCompletedMethod: null,
+  project: {
+    title: "",
+    itemNotes: {},
+    methodNotes: {},
+    decisionNote: "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
   consistencyMode: "consistent",
   compareReadyNotified: false,
   lastComparedCount: 0,
@@ -96,6 +111,7 @@ let state = {
   // Tier Specific
   tierList: { S: [], A: [], B: [], C: [], D: [] },
   draggedItem: null,
+  dragOrder: [],
 
   // Budget Specific
   budget: { allocated: {} },
@@ -122,6 +138,356 @@ const comparisonState = {
   consistencyMode: "consistent", // or "volatile"
 };
 
+const METHOD_LABELS = {
+  pairwise: "Pairwise Ranking",
+  drag: "Drag to Rank",
+  tier: "Tier List",
+  budget: "Budget Allocation",
+  tournament: "Tournament Bracket",
+  smart: "Smart Sort",
+  elimination: "Vote Off The Island",
+};
+
+const METHOD_GUIDANCE = {
+  drag: {
+    type: "quick",
+    use: "Use when you already have a gut order and want a fast baseline.",
+    effort: "Low effort",
+  },
+  budget: {
+    type: "tradeoff",
+    use: "Use when you need to show strength of preference, not just order.",
+    effort: "Low effort",
+  },
+  tier: {
+    type: "grouping",
+    use: "Use when options naturally fall into quality bands.",
+    effort: "Low effort",
+  },
+  pairwise: {
+    type: "thorough",
+    use: "Use when close calls matter and you want every head-to-head tested.",
+    effort: "Higher effort",
+  },
+  smart: {
+    type: "efficient",
+    use: "Use when you want pairwise choices with fewer comparisons.",
+    effort: "Medium effort",
+  },
+  tournament: {
+    type: "head-to-head",
+    use: "Use when picking a winner matters more than perfect lower rankings.",
+    effort: "Medium effort",
+  },
+  elimination: {
+    type: "elimination",
+    use: "Use when it is easier to remove weak options than choose the best one.",
+    effort: "Medium effort",
+  },
+};
+
+function createDefaultProject() {
+  const now = new Date().toISOString();
+  return {
+    title: "",
+    itemNotes: {},
+    methodNotes: {},
+    decisionNote: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function normalizeProjectState() {
+  const existing = state.project && typeof state.project === "object"
+    ? state.project
+    : {};
+  const fallback = createDefaultProject();
+
+  state.project = {
+    ...fallback,
+    ...existing,
+    itemNotes:
+      existing.itemNotes && typeof existing.itemNotes === "object"
+        ? existing.itemNotes
+        : {},
+    methodNotes:
+      existing.methodNotes && typeof existing.methodNotes === "object"
+        ? existing.methodNotes
+        : {},
+  };
+
+  state.project.title = String(state.project.title || "").slice(0, 120);
+  state.project.decisionNote = String(state.project.decisionNote || "");
+}
+
+function touchProject() {
+  normalizeProjectState();
+  state.project.updatedAt = new Date().toISOString();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatScore(score) {
+  const num = Number(score);
+  if (!Number.isFinite(num)) return "0";
+  return Number.isInteger(num) ? String(num) : num.toFixed(1);
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function isValidCompletedMethod(methodData) {
+  return (
+    methodData &&
+    typeof methodData === "object" &&
+    Array.isArray(methodData.rankedList) &&
+    methodData.scores &&
+    typeof methodData.scores === "object"
+  );
+}
+
+function getCompletedMethodNames() {
+  return Object.keys(state.completedMethods || {}).filter((method) =>
+    isValidCompletedMethod(state.completedMethods[method])
+  );
+}
+
+function getCompletedMethodCount() {
+  return getCompletedMethodNames().length;
+}
+
+function sanitizeCompletedMethods(methods) {
+  const sanitized = {};
+  if (!methods || typeof methods !== "object") return sanitized;
+
+  Object.entries(methods).forEach(([methodName, methodData]) => {
+    if (isValidCompletedMethod(methodData)) {
+      sanitized[methodName] = methodData;
+    }
+  });
+
+  return sanitized;
+}
+
+function getMethodLabel(method) {
+  return METHOD_LABELS[method] || method.charAt(0).toUpperCase() + method.slice(1);
+}
+
+function getItemIndex(item) {
+  return state.items.indexOf(item);
+}
+
+function itemsMatchCurrentList(list) {
+  return (
+    Array.isArray(list) &&
+    list.length === state.items.length &&
+    list.every((item) => state.items.includes(item))
+  );
+}
+
+function resetRankingProgress() {
+  normalizeProjectState();
+  state.completedMethods = {};
+  state.compareReadyNotified = false;
+  state.lastComparedCount = 0;
+  state.lastCompletedMethod = null;
+  state.consistencyMode = "consistent";
+
+  state.currentRankings = {};
+  state.pairs = [];
+  state.currentPair = null;
+  state.votedPairs = [];
+  state.history = [];
+  state.showLiveRankings = false;
+
+  state.tierList = { S: [], A: [], B: [], C: [], D: [] };
+  state.draggedItem = null;
+  state.dragOrder = [...state.items];
+  state.budget = { allocated: {} };
+  state.items.forEach((item) => {
+    state.budget.allocated[item] = 0;
+  });
+  state.tournament = { rounds: [], currentRoundIndex: 0, winner: null };
+  state.smartSortData = null;
+  state.elimination = {
+    round: 1,
+    remainingItems: [...state.items],
+    eliminated: {},
+    history: [],
+  };
+
+  comparisonState.analysis = null;
+  comparisonState.robustMethods = [];
+  comparisonState.consistencyMode = "consistent";
+}
+
+function getDecisionTitle(fallback = "Untitled decision") {
+  normalizeProjectState();
+  return state.project.title.trim() || fallback;
+}
+
+function parseItemNotes(value) {
+  const notes = {};
+  String(value || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const separator = line.indexOf(":");
+      if (separator === -1) return;
+      const item = line.slice(0, separator).trim();
+      const note = line.slice(separator + 1).trim();
+      if (item && note) notes[item] = note;
+    });
+  return notes;
+}
+
+function formatItemNotesForTextarea() {
+  normalizeProjectState();
+  return state.items
+    .filter((item) => state.project.itemNotes[item])
+    .map((item) => `${item}: ${state.project.itemNotes[item]}`)
+    .join("\n");
+}
+
+function updateDecisionInputs() {
+  normalizeProjectState();
+  const titleInput = document.getElementById("decisionTitleInput");
+  if (titleInput) titleInput.value = state.project.title || "";
+
+  const notesInput = document.getElementById("itemNotesInput");
+  if (notesInput) notesInput.value = formatItemNotesForTextarea();
+}
+
+function syncDecisionInputs() {
+  normalizeProjectState();
+  const titleInput = document.getElementById("decisionTitleInput");
+  if (titleInput) state.project.title = titleInput.value.trim().slice(0, 120);
+
+  const notesInput = document.getElementById("itemNotesInput");
+  if (notesInput) state.project.itemNotes = parseItemNotes(notesInput.value);
+
+  touchProject();
+  saveState();
+}
+
+function updateProgressBar(progressBar, fill, current, total) {
+  const safeTotal = Math.max(0, Number(total) || 0);
+  const safeCurrent = Math.max(0, Number(current) || 0);
+  const percent = safeTotal > 0 ? Math.min(100, (safeCurrent / safeTotal) * 100) : 0;
+
+  if (fill) fill.style.width = `${percent}%`;
+  if (progressBar) {
+    progressBar.setAttribute("aria-valuenow", String(Math.round(percent)));
+  }
+}
+
+function getMethodRecommendation(mode) {
+  const itemCount = state.items.length;
+  const recommended =
+    itemCount <= 3
+      ? ["drag", "budget", "tier"]
+      : itemCount <= 10
+      ? ["smart", "budget", "pairwise"]
+      : ["smart", "budget", "tier"];
+
+  if (state.itemsSubmitted && recommended.includes(mode)) {
+    return { label: "Recommended start", className: "recommended" };
+  }
+
+  const type = METHOD_GUIDANCE[mode]?.type || "method";
+  return {
+    label: type.charAt(0).toUpperCase() + type.slice(1),
+    className: "",
+  };
+}
+
+function getEstimatedEffort(mode) {
+  const n = state.items.length;
+  if (n <= 0) return "";
+  if (mode === "pairwise") return `${(n * (n - 1)) / 2} comparisons`;
+  if (mode === "smart") return `About ${Math.ceil(n * Math.log2(n))} choices`;
+  if (mode === "tournament") return `${Math.max(0, n - 1)} matchups`;
+  if (mode === "elimination") return `${Math.max(0, n - 1)} eliminations`;
+  return "A few minutes";
+}
+
+function getRecommendedMethods() {
+  const itemCount = state.items.length;
+  if (!state.itemsSubmitted || itemCount === 0) return ["drag", "budget", "tier"];
+  if (itemCount <= 3) return ["drag", "budget", "tier"];
+  if (itemCount <= 10) return ["smart", "budget", "pairwise"];
+  return ["smart", "budget", "tier"];
+}
+
+function startMode(mode) {
+  if (!state.itemsSubmitted) {
+    showNotification("Define your decision before choosing a ranking method.");
+    return;
+  }
+  state.mode = mode;
+  startRankingMode();
+}
+
+function updateMethodHeader(mode) {
+  const header = document.getElementById(`${mode}MethodHeader`);
+  if (!header) return;
+
+  const guidance = METHOD_GUIDANCE[mode];
+  const completed = isValidCompletedMethod(state.completedMethods[mode]);
+  header.innerHTML = `
+    <div>
+      <p class="eyebrow">Ranking method</p>
+      <h2>${escapeHtml(getMethodLabel(mode))}</h2>
+      <p>${escapeHtml(guidance?.use || "Rank your options from another angle.")}</p>
+    </div>
+    <div class="method-header-meta">
+      <span>${escapeHtml(guidance?.effort || "Guided")}</span>
+      <span>${escapeHtml(getEstimatedEffort(mode) || "Ready")}</span>
+      ${completed ? "<span>Completed</span>" : "<span>In progress</span>"}
+    </div>
+  `;
+}
+
+function renderMethodReflection(mode, target) {
+  normalizeProjectState();
+  const container =
+    typeof target === "string" ? document.getElementById(target) : target;
+  if (!container) return;
+
+  const note = state.project.methodNotes[mode] || "";
+  container.innerHTML = `
+    <div class="method-reflection">
+      <label for="${mode}CompletionNote" class="form-label">
+        Reflection note
+        <span class="form-hint">Optional: why did this method feel right or wrong?</span>
+      </label>
+      <textarea
+        id="${mode}CompletionNote"
+        rows="3"
+        data-completion-method="${mode}"
+        placeholder="What did this method reveal?"
+      >${escapeHtml(note)}</textarea>
+    </div>
+  `;
+
+  const input = container.querySelector("[data-completion-method]");
+  input.addEventListener("input", () => {
+    state.project.methodNotes[mode] = input.value;
+    saveState();
+  });
+}
+
 // --- VIEW CONTROLLER ---
 
 function showScreen(screenName) {
@@ -147,6 +513,8 @@ function showScreen(screenName) {
   if (screenName === "home") {
     document.getElementById("homeScreen").classList.remove("hidden");
     document.getElementById("backBtn").classList.add("hidden");
+    state.screen = "home";
+    saveState();
     updateHomeScreen();
     updateInputTitle();
     return;
@@ -165,9 +533,10 @@ function showScreen(screenName) {
 function updateHomeScreen() {
   document.querySelectorAll(".mode-card").forEach((card) => {
     const mode = card.dataset.mode;
+    const guidance = METHOD_GUIDANCE[mode];
 
     // Mark completed
-    if (state.completedMethods[mode]) {
+    if (isValidCompletedMethod(state.completedMethods[mode])) {
       card.classList.add("completed");
     } else {
       card.classList.remove("completed");
@@ -176,12 +545,36 @@ function updateHomeScreen() {
     // Disable/Enable based on items
     if (!state.itemsSubmitted) {
       card.classList.add("disabled");
+      card.setAttribute("aria-disabled", "true");
+      card.tabIndex = -1;
     } else {
       card.classList.remove("disabled");
+      card.setAttribute("aria-disabled", "false");
+      card.tabIndex = 0;
     }
+
+    let guidanceEl = card.querySelector(".method-guidance");
+    if (!guidanceEl) {
+      guidanceEl = document.createElement("div");
+      guidanceEl.className = "method-guidance";
+      card.appendChild(guidanceEl);
+    }
+
+    const recommendation = getMethodRecommendation(mode);
+    guidanceEl.innerHTML = guidance
+      ? `
+          <span class="method-badge ${recommendation.className}">${escapeHtml(recommendation.label)}</span>
+          <span class="method-badge">${escapeHtml(guidance.effort)}</span>
+          <span class="method-badge">${escapeHtml(getEstimatedEffort(mode))}</span>
+          <p>${escapeHtml(guidance.use)}</p>
+        `
+      : "";
   });
 
-  const completedCount = Object.keys(state.completedMethods).length;
+  renderRecommendedMethods();
+  renderLatestReflectionPrompt();
+
+  const completedCount = getCompletedMethodCount();
   const compareBtn = document.getElementById("compareResultsBtn");
   const compareHint = document.getElementById("compareResultsHint");
 
@@ -192,7 +585,7 @@ function updateHomeScreen() {
     compareBtn.setAttribute("aria-disabled", String(!canCompare));
     compareBtn.title = canCompare
       ? "View comparison of all completed rankings"
-      : "Complete at least 2 ranking methods to compare results";
+      : "Complete at least 2 ranking methods to review the decision summary";
     compareBtn.classList.toggle("btn-disabled", !canCompare);
 
     // Auto-scroll + highlight when user becomes eligible to compare
@@ -200,7 +593,7 @@ function updateHomeScreen() {
       state.compareReadyNotified = true;
       saveState();
       showNotification(
-        "You can now compare results! Tap the Compare button to see the summary.",
+        "You can now compare results. Select Compare to see the summary.",
         4000
       );
       compareBtn.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -215,8 +608,8 @@ function updateHomeScreen() {
   if (compareLabel) {
     compareLabel.textContent =
       completedCount >= 2
-        ? `Compare All Results (${completedCount} completed)`
-        : "Compare All Results";
+        ? `Open Decision Summary (${completedCount} completed)`
+        : "Open Decision Summary";
   }
 
   const compareCounter = document.getElementById("compareCounter");
@@ -227,7 +620,76 @@ function updateHomeScreen() {
         : `${completedCount} / 2 complete`;
   }
 
-  lucide.createIcons();
+  refreshIcons();
+}
+
+function renderRecommendedMethods() {
+  const container = document.getElementById("recommendedModeGrid");
+  if (!container) return;
+
+  const methods = getRecommendedMethods();
+  container.innerHTML = methods
+    .map((mode) => {
+      const guidance = METHOD_GUIDANCE[mode];
+      const complete = isValidCompletedMethod(state.completedMethods[mode]);
+      return `
+        <button
+          type="button"
+          class="recommended-method-card ${complete ? "completed" : ""}"
+          data-recommended-mode="${mode}"
+          ${state.itemsSubmitted ? "" : "disabled"}
+        >
+          <span class="recommended-method-kicker">${escapeHtml(guidance?.type || "method")}</span>
+          <strong>${escapeHtml(getMethodLabel(mode))}</strong>
+          <span>${escapeHtml(getEstimatedEffort(mode) || "Define items first")}</span>
+          <small>${escapeHtml(guidance?.use || "")}</small>
+        </button>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll("[data-recommended-mode]").forEach((button) => {
+    button.addEventListener("click", () => startMode(button.dataset.recommendedMode));
+  });
+}
+
+function markMethodCompleted(mode) {
+  state.lastCompletedMethod = mode;
+  touchProject();
+}
+
+function renderLatestReflectionPrompt() {
+  const container = document.getElementById("latestReflectionArea");
+  if (!container) return;
+
+  const mode = state.lastCompletedMethod;
+  if (!mode || !isValidCompletedMethod(state.completedMethods[mode])) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  normalizeProjectState();
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <p class="eyebrow">Method reflection</p>
+    <h3>${escapeHtml(getMethodLabel(mode))}</h3>
+    <label for="latestMethodNote" class="form-label">
+      What did this method reveal?
+      <span class="form-hint">This note is saved with your project.</span>
+    </label>
+    <textarea
+      id="latestMethodNote"
+      rows="4"
+      placeholder="This method felt useful because..."
+    >${escapeHtml(state.project.methodNotes[mode] || "")}</textarea>
+  `;
+
+  const input = document.getElementById("latestMethodNote");
+  input.addEventListener("input", () => {
+    state.project.methodNotes[mode] = input.value;
+    saveState();
+  });
 }
 
 // --- STATE MANAGEMENT ---
@@ -244,11 +706,11 @@ function isLocalStorageAvailable() {
     localStorage.removeItem(testKey);
     _localStorageAvailable = true;
   } catch (err) {
-    // Some browsers (or corrupted/locked storage files) can throw when accessing
-    // localStorage. Try clearing it once as a recovery step before giving up.
+    // Some browsers block or lock localStorage; fail gracefully without
+    // clearing unrelated site data.
     console.warn("LocalStorage unavailable (attempting recovery):", err);
     try {
-      localStorage.clear();
+      localStorage.removeItem("rankitState");
       const testKey = "__rankit_test__";
       localStorage.setItem(testKey, "1");
       localStorage.removeItem(testKey);
@@ -263,6 +725,7 @@ function isLocalStorageAvailable() {
 
 function saveStateNow() {
   if (!isLocalStorageAvailable()) return;
+  touchProject();
 
   if (_saveStateTimeout) {
     clearTimeout(_saveStateTimeout);
@@ -282,6 +745,7 @@ function saveState(debounce = true) {
   }
 
   if (!isLocalStorageAvailable()) return;
+  touchProject();
 
   // Debounce rapid state updates (improves performance during fast interactions)
   if (_saveStateTimeout) {
@@ -306,6 +770,8 @@ function loadState() {
 
     const loaded = JSON.parse(saved);
     state = { ...state, ...loaded }; // Merge to ensure new keys exist
+    normalizeProjectState();
+    state.completedMethods = sanitizeCompletedMethods(state.completedMethods);
 
     // Force refresh to always land on the home screen.
     // This prevents returning to a mid-ranking screen where inputMode can reappear.
@@ -359,6 +825,7 @@ function loadState() {
     // Ensure home UI elements reflect the loaded state
     updateHomeScreen();
     updateOnboardingHints();
+    updateDecisionInputs();
   } catch (err) {
     console.warn("Failed to load state from localStorage:", err);
   }
@@ -425,12 +892,6 @@ function validateItemsInput(value) {
 }
 
 function updateOnboardingHints() {
-  const hints = document.getElementById("onboardingHints");
-  if (!hints) return;
-
-  // Hide hints once items are submitted (user has progressed)
-  hints.classList.toggle("hidden", state.itemsSubmitted);
-
   // Update the checklist progress indicators
   const progressItems = document.getElementById("progressItems");
   const progressMethod = document.getElementById("progressMethod");
@@ -441,7 +902,7 @@ function updateOnboardingHints() {
     progressItems.classList.toggle("incomplete", !state.itemsSubmitted);
   }
 
-  const completedCount = Object.keys(state.completedMethods || {}).length;
+  const completedCount = getCompletedMethodCount();
   const hasMethod = completedCount >= 2;
   if (progressMethod) {
     progressMethod.classList.toggle("complete", hasMethod);
@@ -474,7 +935,7 @@ function updateItemsPreview(value) {
     .filter(Boolean);
 
   preview.innerHTML = items.length
-    ? items.map((i) => `<div class="chip">${i}</div>`).join("")
+    ? items.map((i) => `<div class="chip">${escapeHtml(i)}</div>`).join("")
     : `<div class="chip chip-empty">Items will appear here as you type.</div>`;
 }
 
@@ -483,10 +944,11 @@ function updateItemsPreview(value) {
 function updateInputTitle() {
   const el = document.getElementById("inputTitle");
   if (el)
-    el.textContent = state.itemsSubmitted ? "Your Items" : "Add Your Items";
+    el.textContent = state.itemsSubmitted ? "Your Decision" : "Set Up Your Decision";
 }
 
 function showItemsDisplay() {
+  normalizeProjectState();
   clearInputError();
   updateOnboardingHints();
 
@@ -503,8 +965,26 @@ function showItemsDisplay() {
 
   const display = document.getElementById("itemsDisplay");
   const content = state.items.length
-    ? state.items.map((i) => `<div class="chip">${i}</div>`).join("")
+    ? state.items
+        .map((i) => {
+          const note = state.project.itemNotes[i];
+          return `
+            <div class="chip decision-chip">
+              <span>${escapeHtml(i)}</span>
+              ${note ? `<small>${escapeHtml(note)}</small>` : ""}
+            </div>
+          `;
+        })
+        .join("")
     : `<div class="chip chip-empty">No items found. Enter items to get started.</div>`;
+
+  const decisionDisplay = document.getElementById("decisionDisplay");
+  if (decisionDisplay) {
+    decisionDisplay.innerHTML = `
+      <div class="decision-title-display">${escapeHtml(getDecisionTitle())}</div>
+      <p class="text-muted">Your rankings and notes stay in this browser unless you share or export them.</p>
+    `;
+  }
 
   display.innerHTML = content;
 
@@ -525,49 +1005,36 @@ function showItemsDisplay() {
   btn.style.width = "100%";
   btn.style.marginTop = "1rem";
   btn.onclick = () => {
-    // --- ADDED WARNING LOGIC ---
     // Only warn if there is existing progress to lose
-    const hasProgress = Object.keys(state.completedMethods).length > 0;
+    const hasProgress = getCompletedMethodCount() > 0;
 
     if (hasProgress) {
       const confirmed = confirm(
-        "⚠️ WARNING: Editing your items will reset ALL your ranking progress " +
-          "in Pairwise, Budget, Tournament, and all other completed methods. " +
-          "Do you wish to continue?"
+        "Editing your items will reset all saved ranking progress. Continue?"
       );
 
       if (!confirmed) {
         return; // Stop the process if the user cancels
       }
     }
-    // --- END WARNING LOGIC ---
-
     document.getElementById("inputMode").classList.remove("hidden");
     document.getElementById("displayMode").classList.add("hidden");
     document.getElementById("itemsInput").value = state.items.join(", ");
+    updateDecisionInputs();
 
     // Reset state only after confirmation
     state.itemsSubmitted = false;
-    state.completedMethods = {};
-
-    // Reset method-specific states (important for a clean start)
-    state.currentRankings = {};
-    state.pairs = [];
-    state.currentPair = null;
-    state.votedPairs = [];
-    state.history = [];
-
-    // Ensure other method data is also reset if they exist
-    state.tierList = { S: [], A: [], B: [], C: [], D: [] };
-    // Add other specific modes' state reset here if necessary (e.g., state.budget = {})
+    resetRankingProgress();
 
     updateHomeScreen();
     updateInputTitle();
     updateOnboardingHints();
+    saveState();
   };
   document.getElementById("displayMode").appendChild(btn);
 }
 document.getElementById("startRankingBtn").addEventListener("click", () => {
+  syncDecisionInputs();
   const itemsInput = document.getElementById("itemsInput");
   const val = itemsInput ? itemsInput.value : "";
 
@@ -586,11 +1053,8 @@ document.getElementById("startRankingBtn").addEventListener("click", () => {
 
   state.items = items;
   state.itemsSubmitted = true;
-  state.completedMethods = {}; // Reset results
-
-  // Reset Specific States
-  state.budget = { allocated: {} };
-  state.items.forEach((i) => (state.budget.allocated[i] = 0));
+  syncDecisionInputs();
+  resetRankingProgress();
 
   showItemsDisplay();
   updateHomeScreen();
@@ -602,10 +1066,16 @@ document.getElementById("startRankingBtn").addEventListener("click", () => {
 // --- MODE SELECTION ---
 
 document.querySelectorAll(".mode-card").forEach((card) => {
-  card.addEventListener("click", () => {
-    if (!state.itemsSubmitted) return;
-    state.mode = card.dataset.mode;
-    startRankingMode();
+  const selectMode = () => {
+    startMode(card.dataset.mode);
+  };
+
+  card.addEventListener("click", selectMode);
+  card.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      selectMode();
+    }
   });
 });
 
@@ -624,10 +1094,8 @@ function startRankingMode() {
     // CHECK 3: If currentRankings are empty, it means we must initialize the Elo scores.
     const areRankingsEmpty = Object.keys(state.currentRankings).length === 0;
 
-    // RENAME THE CONDITION: Only initialize if the ranking is completed (restarting)
-    // OR if the system is currently empty (new start).
-if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
-        // Initialize logic
+    if (!isCompleted && isQueueEmpty && areRankingsEmpty) {
+      // Initialize logic
       state.pairs = [];
       for (let i = 0; i < state.items.length; i++) {
         for (let j = i + 1; j < state.items.length; j++) {
@@ -648,6 +1116,7 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
     // relying on the data loaded from local storage.
 
     showScreen("pairwise");
+    updateMethodHeader("pairwise");
     renderPairwiseComparison();
   }
   // 2. Tier
@@ -657,11 +1126,16 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
       state.tierList = { S: [], A: [], B: [], C: [], D: [] };
     }
     showScreen("tier");
+    updateMethodHeader("tier");
     renderTierList();
   }
   // 3. Drag
   else if (state.mode === "drag") {
+    if (!itemsMatchCurrentList(state.dragOrder)) {
+      state.dragOrder = [...state.items];
+    }
     showScreen("drag");
+    updateMethodHeader("drag");
     renderDragRank();
   }
   // 4. Budget
@@ -669,11 +1143,15 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
     // Init budget if empty
     if (!state.budget || !state.budget.allocated)
       state.budget = { allocated: {} };
+    Object.keys(state.budget.allocated).forEach((item) => {
+      if (!state.items.includes(item)) delete state.budget.allocated[item];
+    });
     state.items.forEach((i) => {
       if (state.budget.allocated[i] === undefined)
         state.budget.allocated[i] = 0;
     });
     showScreen("budget");
+    updateMethodHeader("budget");
     renderBudgetScreen();
   }
   // 5. Tournament
@@ -699,19 +1177,25 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
       };
     }
     showScreen("tournament");
+    updateMethodHeader("tournament");
     renderTournamentBracket();
   }
 
   // 6. Smart Sort
   else if (state.mode === "smart") {
-    // NEW: Check for completed Smart Sort ranking (Persistence)
+    // If Smart Sort is already complete, show its saved result.
     if (state.completedMethods["smart"]) {
       showNotification("Returning to completed Smart Sort results.");
       showScreen("smart");
+      updateMethodHeader("smart");
 
       const area = document.getElementById("smartComparisonArea");
       const methodData = state.completedMethods["smart"];
       area.innerHTML = _generateSmartSortResultsHtml(methodData);
+      document.getElementById("smartResetDataBtn").onclick = resetSmartSortData;
+      document.getElementById("smartReturnHomeBtn").onclick = () =>
+        showScreen("home");
+      renderMethodReflection("smart", "smartCompletionReflection");
 
       // Ensure extraneous elements are hidden
       document
@@ -720,7 +1204,7 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
       document.getElementById("smartContextArea").style.display = "none";
       document.getElementById("smartUndoBtn")?.classList.add("hidden");
 
-      lucide.createIcons();
+      refreshIcons();
       return; // Stop initiation and show results
     }
 
@@ -744,6 +1228,7 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
     document.getElementById("smartContextArea").style.display = "block";
 
     showScreen("smart");
+    updateMethodHeader("smart");
     renderSmartSort();
   }
 
@@ -783,6 +1268,7 @@ if (!isCompleted && (isQueueEmpty && areRankingsEmpty)) {
     
     // Always show the screen and render the state, whether new or persisted
     showScreen("elimination");
+    updateMethodHeader("elimination");
     renderEliminationScreen();
   }
 
@@ -846,7 +1332,7 @@ function resetPairwiseRanking() {
       state.pairs.push([state.items[i], state.items[j]]);
     }
   }
-  shuffleArray(state.pairs); // Assumes shuffleArray exists
+  shuffleArray(state.pairs);
   state.currentPair = state.pairs.length > 0 ? state.pairs[0] : null;
   state.items.forEach(
     (i) => (state.currentRankings[i] = { rating: 1000, votes: 0 })
@@ -878,6 +1364,7 @@ function renderPairwiseComparison() {
       scores: finalScores,
       metadata: { scoreType: "ELO Rating" },
     };
+    markMethodCompleted("pairwise");
     saveState();
 
     // 2. Display Final Ranked List and Reset Button
@@ -886,7 +1373,7 @@ function renderPairwiseComparison() {
         (item, index) =>
           `<div class="ranking-item">
              <span class="ranking-number">#${index + 1}</span>
-             ${item}
+             <span class="ranking-name">${escapeHtml(item)}</span>
              <span class="ranking-score">(${Math.round(finalScores[item])})</span>
            </div>`
       )
@@ -905,12 +1392,16 @@ function renderPairwiseComparison() {
       <button class="btn btn-danger" id="pairwiseResetBtn">
         <i data-lucide="rotate-ccw" class="icon"></i> Reset Rankings
       </button>
-      <button class="btn btn-primary" onclick="showScreen('home')">Return Home</button>
+      <button class="btn btn-primary" id="pairwiseReturnHomeBtn">Return Home</button>
+      <div id="pairwiseCompletionReflection" class="completion-reflection-slot"></div>
     `;
 
     // Attach Reset Listener
     document.getElementById("pairwiseResetBtn").onclick = resetPairwiseRanking;
-    lucide.createIcons();
+    document.getElementById("pairwiseReturnHomeBtn").onclick = () =>
+      showScreen("home");
+    renderMethodReflection("pairwise", "pairwiseCompletionReflection");
+    refreshIcons();
 
     return;
   }
@@ -918,37 +1409,57 @@ function renderPairwiseComparison() {
   const [a, b] = state.currentPair;
   area.innerHTML = `
         <div class="comparison-grid">
-            <div class="comparison-card" onclick="handleVote('${a}','${b}')"><h3>${a}</h3></div>
-            <div class="comparison-card" onclick="handleVote('${b}','${a}')"><h3>${b}</h3></div>
+            <button type="button" class="comparison-card" data-winner-index="${getItemIndex(a)}" data-loser-index="${getItemIndex(b)}">
+              <h3>${escapeHtml(a)}</h3>
+            </button>
+            <button type="button" class="comparison-card" data-winner-index="${getItemIndex(b)}" data-loser-index="${getItemIndex(a)}">
+              <h3>${escapeHtml(b)}</h3>
+            </button>
         </div>
     `;
+
+  area.querySelectorAll(".comparison-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const winner = state.items[Number(card.dataset.winnerIndex)];
+      const loser = state.items[Number(card.dataset.loserIndex)];
+      if (winner && loser) handleVote(winner, loser);
+    });
+  });
 
   // Check if history exists to show Undo button
   const hasHistory = state.history && state.history.length > 0;
 
   // Render Buttons
   document.getElementById("actionButtonsArea").innerHTML = `
-        <button class="btn btn-yellow" onclick="handleTie()">Tie (↓ or Space)</button>
-        <button class="btn btn-secondary" onclick="skipPair()">Skip (↑)</button>
+        <button class="btn btn-yellow" id="pairwiseTieBtn">Tie (↓ or Space)</button>
+        <button class="btn btn-secondary" id="pairwiseSkipBtn">Skip (↑)</button>
         ${
           hasHistory
-            ? `<button class="btn btn-blue" onclick="undoPairwiseVote()">
+            ? `<button class="btn btn-blue" id="pairwiseUndoBtn">
                 <i data-lucide="rotate-ccw" class="icon"></i> Undo (Ctrl+Z)
             </button>`
             : ""
         }
     `;
 
-  lucide.createIcons(); // Refresh icons for the new undo button
+  document.getElementById("pairwiseTieBtn").onclick = handleTie;
+  document.getElementById("pairwiseSkipBtn").onclick = skipPair;
+  const undoBtn = document.getElementById("pairwiseUndoBtn");
+  if (undoBtn) undoBtn.onclick = undoPairwiseVote;
+
+  refreshIcons(); // Refresh icons for the new undo button
 
   // Progress
   const total = state.pairs.length + state.votedPairs.length;
   document.getElementById(
     "progressText"
   ).textContent = `${state.votedPairs.length} / ${total}`;
-  document.getElementById("progressFill").style.width = `${
-    (state.votedPairs.length / total) * 100
-  }%`;
+  updateProgressBar(
+    document.querySelector("#pairwiseScreen .progress-bar"),
+    document.getElementById("progressFill"),
+    state.votedPairs.length,
+    total
+  );
 }
 
 function handleVote(winner, loser) {
@@ -1009,7 +1520,9 @@ function getSortedRankings() {
 
 function finishBudget() {
   // 1. Get allocated scores
-  const allocatedScores = state.budget.allocated;
+  const allocatedScores = Object.fromEntries(
+    state.items.map((item) => [item, Number(state.budget.allocated[item] || 0)])
+  );
 
   // 2. Determine ranking based on score
   const rankedList = Object.keys(allocatedScores).sort(
@@ -1022,6 +1535,7 @@ function finishBudget() {
     scores: allocatedScores,
     metadata: { scoreType: "Allocated Budget ($)" },
   };
+  markMethodCompleted("budget");
   saveState();
   showNotification("Budget ranking saved!");
   showScreen("home");
@@ -1058,17 +1572,26 @@ function renderBudgetScreen() {
       const safeId = idx;
       return `
             <div class="budget-row">
-                <div class="budget-label">${item}</div>
+                <label class="budget-label" for="range-${safeId}">${escapeHtml(item)}</label>
                 <input type="range" id="range-${safeId}" class="budget-slider" 
-                       min="0" max="100" value="${val}" 
-                       oninput="handleBudgetInput('${item}', ${safeId}, this.value)">
+                       min="0" max="100" value="${val}" data-item-index="${idx}" data-budget-id="${safeId}">
                 <input type="number" id="num-${safeId}" class="budget-input" 
-                       min="0" max="100" value="${val}" 
-                       onchange="handleBudgetInput('${item}', ${safeId}, this.value)">
+                       min="0" max="100" value="${val}" data-item-index="${idx}" data-budget-id="${safeId}"
+                       aria-label="Budget for ${escapeHtml(item)}">
             </div>
         `;
     })
     .join("");
+
+  container
+    .querySelectorAll(".budget-slider, .budget-input")
+    .forEach((input) => {
+      input.addEventListener("input", () => {
+        const item = state.items[Number(input.dataset.itemIndex)];
+        if (!item) return;
+        handleBudgetInput(item, Number(input.dataset.budgetId), input.value);
+      });
+    });
 }
 
 // 4. Optimized Input Handler (Does NOT re-render HTML)
@@ -1105,17 +1628,11 @@ document.getElementById("saveBudgetBtn").addEventListener("click", () => {
     0
   );
   if (total !== 100) {
-    alert(`You must use exactly $100. Currently at $${total}.`);
+    showNotification(`Use exactly $100 before saving. Current total: $${total}.`, 3500);
     return;
   }
-  // Sort by money allocated
-  const sorted = Object.keys(state.budget.allocated).sort(
-    (a, b) => state.budget.allocated[b] - state.budget.allocated[a]
-  );
-  state.completedMethods["budget"] = sorted;
   saveState();
   finishBudget();
-  showScreen("home");
   showNotification("Budget Saved!");
 });
 
@@ -1145,6 +1662,7 @@ function resetTournamentData() {
     structure: generateInitialTournamentStructure(participants),
     eliminated: {},
   };
+  delete state.completedMethods.tournament;
 
   // 3. Clear the winner area display
   const winnerArea = document.getElementById("tournamentWinnerArea");
@@ -1165,6 +1683,7 @@ function resetTournamentData() {
 
 function renderTournamentBracket() {
   const container = document.getElementById("bracketContainer");
+  const tournamentWinnerArea = document.getElementById("tournamentWinnerArea");
   const structure = state.tournament.structure;
   const totalRounds = structure.length;
 
@@ -1177,15 +1696,17 @@ function renderTournamentBracket() {
             <div class="card bg-success-subtle text-success-emphasis" style="margin-bottom: 1rem; padding: 1rem;">
                 <i data-lucide="trophy" class="icon" style="color: gold; width: 2rem; height: 2rem; margin-right: 0.5rem; display: inline-block; vertical-align: middle;"></i>
                 <h3 style="font-size: 1.5rem; font-weight: bold; margin: 0; display: inline-block; vertical-align: middle;">Tournament Complete!</h3>
-                <p style="font-size: 1.2rem; margin-top: 0.5rem;">The winner is: <strong>${finalWinner}</strong></p>
+                <p style="font-size: 1.2rem; margin-top: 0.5rem;">The winner is: <strong>${escapeHtml(finalWinner)}</strong></p>
             </div>
             <div class="text-center">
                 <button class="btn btn-primary" id="finishTourneyBtn">Return Home</button>
             </div>
+            <div id="tournamentCompletionReflection" class="completion-reflection-slot"></div>
         `;
     tournamentWinnerArea.classList.remove("hidden");
-    lucide.createIcons();
+    refreshIcons();
     document.getElementById("finishTourneyBtn").onclick = finishTournament;
+    renderMethodReflection("tournament", "tournamentCompletionReflection");
     return;
   }
 
@@ -1213,32 +1734,22 @@ function renderTournamentBracket() {
         // --- BYE LOGIC ---
         html += `
                     <div class="match-card">
-                        <div class="match-player winner" onclick="advanceTournament(${roundIndex}, ${i}, '${p1}')">
-                           ${displayPlayer(
-                             p1
-                           )} <span style="font-size:0.7em; margin-left:auto; opacity:0.6">(BYE - Click to Advance)</span>
-                        </div>
+                        <button type="button" class="match-player winner" data-round-index="${roundIndex}" data-player-index="${i}" data-winner-index="${getItemIndex(p1)}">
+                           ${escapeHtml(displayPlayer(p1))} <span class="match-note">(bye - advance)</span>
+                        </button>
                     </div>`;
       } else {
         // --- REGULAR MATCH LOGIC ---
         html += `
                     <div class="match-card ${!isReady ? "placeholder" : ""}">
-                        <div class="${p1Class} match-player" 
-                             ${
-                               isReady && p1
-                                 ? `onclick="advanceTournament(${roundIndex}, ${i}, '${p1}', '${p2}')"`
-                                 : ""
-                             }>
-                             ${displayPlayer(p1)}
-                        </div>
-                        <div class="${p2Class} match-player" 
-                             ${
-                               isReady && p2
-                                 ? `onclick="advanceTournament(${roundIndex}, ${i}, '${p2}', '${p1}')"`
-                                 : ""
-                             }>
-                             ${displayPlayer(p2)}
-                        </div>
+                        <button type="button" class="${p1Class} match-player"
+                             ${isReady && p1 ? `data-round-index="${roundIndex}" data-player-index="${i}" data-winner-index="${getItemIndex(p1)}" data-loser-index="${getItemIndex(p2)}"` : "disabled"}>
+                             ${escapeHtml(displayPlayer(p1))}
+                        </button>
+                        <button type="button" class="${p2Class} match-player"
+                             ${isReady && p2 ? `data-round-index="${roundIndex}" data-player-index="${i}" data-winner-index="${getItemIndex(p2)}" data-loser-index="${getItemIndex(p1)}"` : "disabled"}>
+                             ${escapeHtml(displayPlayer(p2))}
+                        </button>
                     </div>
                 `;
       }
@@ -1248,10 +1759,26 @@ function renderTournamentBracket() {
 
   html += "</div>";
   container.innerHTML = html;
+  container.querySelectorAll(".match-player[data-winner-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      advanceTournament(
+        Number(button.dataset.roundIndex),
+        Number(button.dataset.playerIndex),
+        Number(button.dataset.winnerIndex),
+        button.dataset.loserIndex === undefined
+          ? null
+          : Number(button.dataset.loserIndex)
+      );
+    });
+  });
 }
 
-window.advanceTournament = (roundIndex, playerIndex, winnerName, loserName) => {
+window.advanceTournament = (roundIndex, playerIndex, winnerIndex, loserIndex = null) => {
   const structure = state.tournament.structure;
+  const winnerName = state.items[winnerIndex];
+  const loserName =
+    loserIndex === null || Number.isNaN(loserIndex) ? null : state.items[loserIndex];
+  if (!winnerName) return;
 
   // 1. Set Winner in Next Round
   const nextRoundIndex = roundIndex + 1;
@@ -1295,13 +1822,12 @@ function finishTournament() {
     (a, b) => finalScores[b] - finalScores[a]
   );
 
-  // --- NEW Tournament Finish Logic ---
   state.completedMethods["tournament"] = {
     rankedList: finalRanking,
     scores: finalScores,
     metadata: { scoreType: "Elimination Round Score" },
   };
-  // --- END NEW Logic ---
+  markMethodCompleted("tournament");
 
   saveState();
   showScreen("home");
@@ -1315,7 +1841,6 @@ function finishTournament() {
 function _generateSmartSortResultsHtml(methodData) {
   if (!methodData || !methodData.rankedList) return "";
 
-  // Assumes getTieAwareRanking is defined and available
   const rankedItemsWithTies = getTieAwareRanking(methodData);
   const scoreType = methodData.metadata?.scoreType || "Raw Score";
 
@@ -1333,9 +1858,9 @@ function _generateSmartSortResultsHtml(methodData) {
                 (rankedItem) => `
                 <div class="method-ranking-item">
                     <span class="rank-badge">${rankedItem.rank}</span> 
-                    ${rankedItem.item}
+                    <span class="ranking-name">${escapeHtml(rankedItem.item)}</span>
                     <span style="margin-left: auto; font-size: 0.9em; color: #4b5563;">
-                        ${rankedItem.score.toFixed(1)}
+                        ${formatScore(rankedItem.score)}
                     </span>
                 </div>
             `
@@ -1344,13 +1869,14 @@ function _generateSmartSortResultsHtml(methodData) {
         </div>
 
         <div class="action-buttons" style="margin-top: 1rem;">
-            <button class="btn btn-blue" onclick="resetSmartSortData()">
-                Rank Again? (Reset Data)
+            <button class="btn btn-blue" id="smartResetDataBtn">
+                Rank Again
             </button>
-            <button class="btn btn-primary" onclick="showScreen('home')">
+            <button class="btn btn-primary" id="smartReturnHomeBtn">
                 Back to Home
             </button>
         </div>
+        <div id="smartCompletionReflection" class="completion-reflection-slot"></div>
     `;
 }
 
@@ -1370,7 +1896,6 @@ window.resetSmartSortData = () => {
 
 function renderSmartSort() {
   const area = document.getElementById("smartComparisonArea");
-  const manager = MergeSortManager.fromState(state.smartSortData);
   if (!state.smartSortData || !state.smartSortData.lists) {
     // If data is null/missing, force re-initialization before proceeding.
     // This calls the logic within startRankingMode that creates the MergeSortManager data.
@@ -1378,6 +1903,7 @@ function renderSmartSort() {
     // Since startRankingMode calls renderSmartSort(), we can return here
     return;
   }
+  const manager = MergeSortManager.fromState(state.smartSortData);
   const pair = manager.getNextPair();
 
   // Progress Calculation
@@ -1392,7 +1918,12 @@ function renderSmartSort() {
   document.getElementById("smartProgressText").textContent = pair
     ? "Sorting..."
     : "Done";
-  document.getElementById("smartProgressFill").style.width = `${progress}%`;
+  updateProgressBar(
+    document.querySelector("#smartScreen .progress-bar"),
+    document.getElementById("smartProgressFill"),
+    progress,
+    100
+  );
 
   if (!pair) {
     // --- Smart Sort Completion Logic ---
@@ -1411,11 +1942,16 @@ function renderSmartSort() {
       scores: finalScores,
       metadata: { scoreType: "Ordinal Rank Score (Merge Sort)" },
     };
+    markMethodCompleted("smart");
     saveState();
 
     // 1. RENDER THE DETAILED RESULTS LIST
     const methodData = state.completedMethods["smart"];
     area.innerHTML = _generateSmartSortResultsHtml(methodData);
+    document.getElementById("smartResetDataBtn").onclick = resetSmartSortData;
+    document.getElementById("smartReturnHomeBtn").onclick = () =>
+      showScreen("home");
+    renderMethodReflection("smart", "smartCompletionReflection");
 
     // 2. HIDE PROGRESS BAR AND CONTEXT
     document
@@ -1426,7 +1962,7 @@ function renderSmartSort() {
     // 3. HIDE UNDO BUTTON IF VISIBLE
     document.getElementById("smartUndoBtn")?.classList.add("hidden");
 
-    lucide.createIcons();
+    refreshIcons();
     return;
   }
 
@@ -1439,31 +1975,35 @@ function renderSmartSort() {
 
   area.innerHTML = `
         <div class="comparison-grid">
-            <div class="comparison-card" onclick="handleSmartVote('${
-              pair.left
-            }')">
-                <h3>${pair.left}</h3>
+            <button type="button" class="comparison-card" data-winner-index="${getItemIndex(pair.left)}">
+                <h3>${escapeHtml(pair.left)}</h3>
                 <div class="comparison-hint">Press Left Arrow</div>
-            </div>
-            <div class="comparison-card" onclick="handleSmartVote('${
-              pair.right
-            }')">
-                <h3>${pair.right}</h3>
+            </button>
+            <button type="button" class="comparison-card" data-winner-index="${getItemIndex(pair.right)}">
+                <h3>${escapeHtml(pair.right)}</h3>
                 <div class="comparison-hint">Press Right Arrow</div>
-            </div>
+            </button>
         </div>
         
-        <div id="actionButtonsArea" class="action-buttons">
+        <div id="smartActionButtonsArea" class="action-buttons">
              ${
                hasHistory
-                 ? `<button id="smartUndoBtn" class="btn btn-blue" onclick="undoSmartVote()">
+                 ? `<button id="smartUndoBtn" class="btn btn-blue">
                     <i data-lucide="rotate-ccw" class="icon"></i> Undo (Ctrl+Z)
                 </button>`
                  : ""
              }
         </div>
     `;
-  lucide.createIcons();
+  area.querySelectorAll(".comparison-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const winner = state.items[Number(card.dataset.winnerIndex)];
+      if (winner) handleSmartVote(winner);
+    });
+  });
+  const smartUndoBtn = document.getElementById("smartUndoBtn");
+  if (smartUndoBtn) smartUndoBtn.onclick = undoSmartVote;
+  refreshIcons();
 }
 
 window.handleSmartVote = (winnerItem) => {
@@ -1522,7 +2062,9 @@ window.undoSmartVote = () => {
 
 // --- LOGIC: DRAG ---
 function finalizeDragRank() {
-  const finalList = state.items; // The final order is stored directly in state.items
+  const finalList = Array.isArray(state.dragOrder) && state.dragOrder.length
+    ? [...state.dragOrder]
+    : [...state.items];
   const finalScores = {};
 
   // Score is based on rank (1st gets N points, 2nd gets N-1, etc.)
@@ -1539,6 +2081,7 @@ function finalizeDragRank() {
     scores: finalScores,
     metadata: { scoreType: "Ordinal Rank Score" },
   };
+  markMethodCompleted("drag");
 
   saveState();
   showNotification("Drag to Rank Saved!");
@@ -1546,11 +2089,15 @@ function finalizeDragRank() {
 
 function renderDragRank() {
   const list = document.getElementById("dragRankList");
-  list.innerHTML = state.items
+  if (!itemsMatchCurrentList(state.dragOrder)) {
+    state.dragOrder = [...state.items];
+  }
+
+  list.innerHTML = state.dragOrder
     .map(
       (item, idx) => `
         <li class="drag-rank-item" draggable="true" data-index="${idx}">
-          <span>${idx + 1}.</span> <span>${item}</span>
+          <span>${idx + 1}.</span> <span>${escapeHtml(item)}</span>
         </li>
     `
     )
@@ -1572,8 +2119,8 @@ function renderDragRank() {
       const fromIdx = parseInt(dragged.dataset.index);
       const toIdx = parseInt(li.dataset.index);
       if (fromIdx !== toIdx) {
-        const item = state.items.splice(fromIdx, 1)[0];
-        state.items.splice(toIdx, 0, item);
+        const item = state.dragOrder.splice(fromIdx, 1)[0];
+        state.dragOrder.splice(toIdx, 0, item);
         saveState();
         renderDragRank();
       }
@@ -1594,14 +2141,13 @@ function renderTierList() {
   const area = document.getElementById("unplacedItemsArea");
   const tierArea = document.getElementById("tierListArea");
 
-  // Basic Render for fix context
   const allPlaced = Object.values(state.tierList).flat();
   const unplaced = state.items.filter((i) => !allPlaced.includes(i));
 
   area.innerHTML = unplaced
     .map(
       (i) =>
-        `<div class="draggable-item" draggable="true" id="item-${i}">${i}</div>`
+        `<div class="draggable-item" draggable="true" data-item-index="${getItemIndex(i)}">${escapeHtml(i)}</div>`
     )
     .join("");
 
@@ -1615,7 +2161,7 @@ function renderTierList() {
                 ${state.tierList[t]
                   .map(
                     (i) =>
-                      `<div class="draggable-item" draggable="true" id="item-${i}">${i}</div>`
+                      `<div class="draggable-item" draggable="true" data-item-index="${getItemIndex(i)}">${escapeHtml(i)}</div>`
                   )
                   .join("")}
             </div>
@@ -1631,7 +2177,7 @@ function setupTierDrag() {
   const items = document.querySelectorAll(".draggable-item");
   items.forEach((item) => {
     item.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text", e.target.innerText);
+      e.dataTransfer.setData("text/plain", e.target.dataset.itemIndex);
       e.target.style.opacity = 0.5;
     });
     item.addEventListener("dragend", (e) => (e.target.style.opacity = 1));
@@ -1641,7 +2187,9 @@ function setupTierDrag() {
     zone.addEventListener("dragover", (e) => e.preventDefault());
     zone.addEventListener("drop", (e) => {
       e.preventDefault();
-      const text = e.dataTransfer.getData("text");
+      const itemIndex = Number(e.dataTransfer.getData("text/plain"));
+      const text = state.items[itemIndex];
+      if (!text) return;
       const tier = zone.dataset.tier;
 
       // Remove from all other tiers/unplaced
@@ -1700,6 +2248,7 @@ document.getElementById("saveTierBtn").addEventListener("click", () => {
     scores: finalScores,
     metadata: { scoreType: "Tier Level (S=5 to D=1)" },
   };
+  markMethodCompleted("tier");
 
   saveState(); // Save the final, completed state
   showScreen("home");
@@ -1729,10 +2278,14 @@ function renderEliminationScreen() {
     finalResultArea.classList.remove("hidden");
     finalResultArea.innerHTML = `
             <h2>Ranking Complete!</h2>
-            <p style="margin-bottom: 1.5rem;">Your ultimate survivor is 🥇 <strong>${winner}</strong>!</p>
-            <button class="btn btn-primary" onclick="showScreen('home')">Return Home</button>
+            <p style="margin-bottom: 1.5rem;">Top remaining item: <strong>${escapeHtml(winner)}</strong></p>
+            <button class="btn btn-primary" id="eliminationReturnHomeBtn">Return Home</button>
+            <div id="eliminationCompletionReflection" class="completion-reflection-slot"></div>
         `;
-    lucide.createIcons();
+    document.getElementById("eliminationReturnHomeBtn").onclick = () =>
+      showScreen("home");
+    renderMethodReflection("elimination", "eliminationCompletionReflection");
+    refreshIcons();
     return;
   }
 
@@ -1764,7 +2317,7 @@ function renderEliminationScreen() {
       if (isEliminated) {
         return `
                 <div class="elimination-item-card eliminated-card">
-                    <h3>${item}</h3>
+                    <h3>${escapeHtml(item)}</h3>
                     <p style="font-size: 0.8em; color: #9ca3af; margin-top: 0.5rem;">
                         Eliminated Round #${eliminationRound}
                     </p>
@@ -1774,17 +2327,33 @@ function renderEliminationScreen() {
         return `
                 <div 
                     class="elimination-item-card" 
-                    onclick="handleEliminationVote('${item}')"
+                    role="button"
+                    tabindex="0"
+                    data-item-index="${getItemIndex(item)}"
                 >
-                    <h3>${item}</h3>
+                    <h3>${escapeHtml(item)}</h3>
                     <p style="font-size: 0.8em; color: #4f46e5; margin-top: 0.5rem;">
-                        Click to Eliminate
+                        Select to eliminate
                     </p>
                 </div>
             `;
       }
     })
     .join("");
+
+  area.querySelectorAll(".elimination-item-card[data-item-index]").forEach((card) => {
+    const vote = () => {
+      const item = state.items[Number(card.dataset.itemIndex)];
+      if (item) handleEliminationVote(item);
+    };
+    card.addEventListener("click", vote);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        vote();
+      }
+    });
+  });
 
   // Update Undo Button visibility
   if (state.elimination.history.length > 0) {
@@ -1796,7 +2365,7 @@ function renderEliminationScreen() {
   // Attach event listener for the Undo Button
   undoBtn.onclick = undoEliminationVote;
   finalResultArea.classList.add("hidden");
-  lucide.createIcons();
+  refreshIcons();
 }
 
 // --- LOGIC: HANDLE VOTE ---
@@ -1865,14 +2434,13 @@ function finalizeElimination(winner) {
     scores: finalScores,
     metadata: { scoreType: "Elimination Round Score" },
   };
+  markMethodCompleted("elimination");
 
   saveState();
 }
 
 // --- RESULTS ---
 // --- RESULTS UTILITY FUNCTIONS ---
-
-// Replace your existing getTieAwareRanking function with this simplified version:
 
 /**
  * Generates a ranked list using Standard Competition Ranking (1, 2, 2, 4)
@@ -1916,7 +2484,7 @@ function getTieAwareRanking(methodData) {
 
 function analyzeRankings() {
   const allItems = state.items;
-  const methods = Object.keys(state.completedMethods);
+  const methods = getCompletedMethodNames();
   let consensusData = {};
 
   if (methods.length === 0) return { consensus: [], consistency: [] };
@@ -2008,22 +2576,23 @@ function analyzeRankings() {
  * Gathers all ranking data, formats it into a CSV string, and triggers a download.
  */
 function exportComparisonData() {
+  normalizeProjectState();
   const analysis = analyzeRankings();
   const completedMethods = state.completedMethods;
   
   // 1. Define the columns (Headers)
-  let headers = ["Item", "Consensus Rank"]; 
+  let headers = ["Decision", "Item", "Item Note", "Consensus Rank"];
   
   // Dynamically add columns for each completed method
-  const methodHeaders = Object.keys(completedMethods);
+  const methodHeaders = getCompletedMethodNames();
   methodHeaders.forEach(method => {
     // CSV columns will be "MethodName Rank" and "MethodName Score"
-    headers.push(`${method.charAt(0).toUpperCase() + method.slice(1)} Rank`);
-    headers.push(`${method.charAt(0).toUpperCase() + method.slice(1)} Score`);
+    headers.push(`${getMethodLabel(method)} Rank`);
+    headers.push(`${getMethodLabel(method)} Score`);
   });
 
   // 2. Start the CSV string with the headers
-  let csv = headers.join(",") + "\n";
+  let csv = headers.map(csvEscape).join(",") + "\n";
   
   // Cache tie-aware ranks for each method to avoid re-calculation
   const tieAwareRanksCache = {};
@@ -2042,7 +2611,11 @@ function exportComparisonData() {
   const consensusRanking = (analysis.consensus || []).map((c) => c.item);
 
   consensusRanking.forEach((item, consensusIndex) => {
-    let row = [item];
+    let row = [
+      getDecisionTitle(),
+      item,
+      state.project.itemNotes[item] || "",
+    ];
     
     // --- Consensus Data ---
     // The rank number is 1-based index in the consensusRanking array
@@ -2064,7 +2637,16 @@ function exportComparisonData() {
       }
     });
 
-    csv += row.join(",") + "\n";
+    csv += row.map(csvEscape).join(",") + "\n";
+  });
+
+  csv += "\n";
+  csv += ["Decision Note", state.project.decisionNote || ""].map(csvEscape).join(",") + "\n";
+  methodHeaders.forEach((method) => {
+    csv += [
+      `${getMethodLabel(method)} Note`,
+      state.project.methodNotes[method] || "",
+    ].map(csvEscape).join(",") + "\n";
   });
   
   // 4. Trigger download
@@ -2081,6 +2663,106 @@ function exportComparisonData() {
   showNotification("Comparison data exported successfully!");
 }
 
+function buildProjectExport() {
+  normalizeProjectState();
+  return {
+    version: 2,
+    title: state.project.title || "",
+    items: state.items,
+    itemNotes: state.project.itemNotes || {},
+    completedMethods: state.completedMethods || {},
+    methodNotes: state.project.methodNotes || {},
+    decisionNote: state.project.decisionNote || "",
+    createdAt: state.project.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function downloadTextFile(filename, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", filename);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function exportProjectData() {
+  const project = buildProjectExport();
+  const slug = (project.title || "rankit-project")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60) || "rankit-project";
+
+  downloadTextFile(
+    `${slug}.json`,
+    JSON.stringify(project, null, 2),
+    "application/json;charset=utf-8"
+  );
+  showNotification("Project JSON exported.");
+}
+
+function importProjectData(project) {
+  if (!project || !Array.isArray(project.items)) {
+    showNotification("Could not import that project file.", 3500);
+    return;
+  }
+
+  state.items = project.items.map((item) => String(item).trim()).filter(Boolean);
+  state.itemsSubmitted = state.items.length >= 3;
+  state.completedMethods = sanitizeCompletedMethods(project.completedMethods);
+  state.project = {
+    title: String(project.title || ""),
+    itemNotes:
+      project.itemNotes && typeof project.itemNotes === "object"
+        ? project.itemNotes
+        : {},
+    methodNotes:
+      project.methodNotes && typeof project.methodNotes === "object"
+        ? project.methodNotes
+        : {},
+    decisionNote: String(project.decisionNote || ""),
+    createdAt: project.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  normalizeProjectState();
+  resetRankingProgress();
+  state.completedMethods = sanitizeCompletedMethods(project.completedMethods);
+  showItemsDisplay();
+  updateDecisionInputs();
+  updateHomeScreen();
+  updateInputTitle();
+  updateOnboardingHints();
+  saveState();
+  showScreen("home");
+  showNotification("Project imported.");
+}
+
+function setupProjectImportInput(input) {
+  if (!input) return;
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        importProjectData(JSON.parse(String(reader.result || "")));
+      } catch (err) {
+        console.warn("Failed to import project JSON:", err);
+        showNotification("Could not read that project file.", 3500);
+      } finally {
+        input.value = "";
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
 // --- SHARE LINK + TOUR ---
 
 function _safeBase64Encode(str) {
@@ -2092,9 +2774,14 @@ function _safeBase64Decode(str) {
 }
 
 function buildShareToken() {
+  normalizeProjectState();
   const payload = {
+    title: state.project.title,
     items: state.items,
+    itemNotes: state.project.itemNotes,
     completedMethods: state.completedMethods,
+    methodNotes: state.project.methodNotes,
+    decisionNote: state.project.decisionNote,
   };
   try {
     const json = JSON.stringify(payload);
@@ -2174,13 +2861,29 @@ function loadSharedStateFromUrl() {
 
   state.items = shared.items;
   state.itemsSubmitted = true;
+  state.project = {
+    ...createDefaultProject(),
+    title: String(shared.title || ""),
+    itemNotes:
+      shared.itemNotes && typeof shared.itemNotes === "object"
+        ? shared.itemNotes
+        : {},
+    methodNotes:
+      shared.methodNotes && typeof shared.methodNotes === "object"
+        ? shared.methodNotes
+        : {},
+    decisionNote: String(shared.decisionNote || ""),
+  };
+  normalizeProjectState();
+  resetRankingProgress();
 
   if (shared.completedMethods && typeof shared.completedMethods === "object") {
-    state.completedMethods = shared.completedMethods;
+    state.completedMethods = sanitizeCompletedMethods(shared.completedMethods);
   }
 
   // Ensure rankable methods have their supporting state on load
   showItemsDisplay();
+  updateDecisionInputs();
   updateHomeScreen();
   updateInputTitle();
   updateOnboardingHints();
@@ -2189,7 +2892,7 @@ function loadSharedStateFromUrl() {
   showNotification("Loaded ranking from shared link.");
 }
 
-// --- NEW VISUALIZATION FUNCTIONS (Add to script.js) ---
+// --- VISUALIZATION FUNCTIONS ---
 
 // Global Chart variables to allow redrawing
 let rankFlowChartInstance = null;
@@ -2207,10 +2910,22 @@ function getItemColor(item) {
 
 function createVisualizations(analysis, robustMethods) {
   const allItems = state.items;
+  if (typeof Chart === "undefined") {
+    ["rankFlowArea", "scatterPlotArea"].forEach((id) => {
+      const area = document.getElementById(id);
+      if (area) {
+        area.innerHTML = `
+          <h3>${id === "rankFlowArea" ? "Rank Flow Diagram" : "Method-to-Method Comparison"}</h3>
+          <p class="chart-caption">Charts are unavailable because the chart library did not load.</p>
+        `;
+      }
+    });
+    return;
+  }
 
   // --- 1. Rank Flow Diagram (Line Chart) ---
   const rankFlowData = {
-    labels: robustMethods.map((m) => m.toUpperCase()), // X-Axis: Methods
+    labels: robustMethods.map((m) => getMethodLabel(m)), // X-Axis: Methods
     datasets: allItems.map((item) => {
       const dataPoints = robustMethods.map((methodName) => {
         // Find the item's tie-aware rank in the completed data
@@ -2283,8 +2998,15 @@ function createVisualizations(analysis, robustMethods) {
   scatterX.innerHTML = "";
   scatterY.innerHTML = "";
   robustMethods.forEach((method) => {
-    scatterX.innerHTML += `<option value="${method}">${method.toUpperCase()}</option>`;
-    scatterY.innerHTML += `<option value="${method}">${method.toUpperCase()}</option>`;
+    const optionX = document.createElement("option");
+    optionX.value = method;
+    optionX.textContent = getMethodLabel(method);
+    scatterX.appendChild(optionX);
+
+    const optionY = document.createElement("option");
+    optionY.value = method;
+    optionY.textContent = getMethodLabel(method);
+    scatterY.appendChild(optionY);
   });
 
   // Set initial default comparison (e.g., Pairwise vs. Budget, or first two methods)
@@ -2336,7 +3058,7 @@ function createVisualizations(analysis, robustMethods) {
           x: {
             reverse: true, // Rank 1 is on the right
             beginAtZero: true,
-            title: { display: true, text: methodX.toUpperCase() + " Rank" },
+            title: { display: true, text: getMethodLabel(methodX) + " Rank" },
             ticks: { stepSize: 1 },
             min: 1,
             max: allItems.length,
@@ -2344,7 +3066,7 @@ function createVisualizations(analysis, robustMethods) {
           y: {
             reverse: true, // Rank 1 is at the top
             beginAtZero: true,
-            title: { display: true, text: methodY.toUpperCase() + " Rank" },
+            title: { display: true, text: getMethodLabel(methodY) + " Rank" },
             ticks: { stepSize: 1 },
             min: 1,
             max: allItems.length,
@@ -2406,7 +3128,7 @@ function createHeatmap(analysis, robustMethods) {
       <tr>
         <th>Item</th>
         ${robustMethods
-          .map((methodName) => `<th>${methodName.toUpperCase()}</th>`)
+          .map((methodName) => `<th>${escapeHtml(getMethodLabel(methodName))}</th>`)
           .join("")}
       </tr>
     </thead>
@@ -2429,8 +3151,8 @@ function createHeatmap(analysis, robustMethods) {
             <td
               class="heatmap-cell"
               style="background: ${bg}; color: ${textColor};"
-              title="${methodName.toUpperCase()}: ${display}"
-              aria-label="${methodName.toUpperCase()}: ${display}"
+              title="${escapeHtml(getMethodLabel(methodName))}: ${display}"
+              aria-label="${escapeHtml(getMethodLabel(methodName))}: ${display}"
             >
               ${display}
             </td>
@@ -2440,7 +3162,7 @@ function createHeatmap(analysis, robustMethods) {
 
       return `
         <tr>
-          <th class="heatmap-item">${item}</th>
+          <th class="heatmap-item">${escapeHtml(item)}</th>
           ${cells}
         </tr>
       `;
@@ -2470,13 +3192,13 @@ function renderSummaryCards() {
 
   // Select items depending on mode
   let selected = [];
-  let title = "✅ Most Consistent Items";
+  let title = "Most Consistent Items";
   let desc =
     "Items ranked similarly across methods (smaller spread = more consistent).";
 
   if (mode === "volatile") {
     selected = consistencyList.slice(-5).reverse();
-    title = "🌀 Most Volatile Items";
+    title = "Most Volatile Items";
     desc = "Items with the biggest rank swings across methods.";
   } else {
     selected = consistencyList.slice(0, 5);
@@ -2484,7 +3206,7 @@ function renderSummaryCards() {
 
   const consensusCard = `
         <div class="method-results-card consensus-card">
-            <h3>⭐ Consensus Rank</h3>
+            <h3>Consensus Rank</h3>
             <p style="color: #6b7280; margin-bottom: 1rem;">
                 (Average rank score across all ${robustMethods.length} methods)
             </p>
@@ -2493,9 +3215,9 @@ function renderSummaryCards() {
                 (entry, i) => `
                 <div class="method-ranking-item">
                     <span class="rank-badge">${i + 1}</span> 
-                    ${entry.item}
+                    <span class="ranking-name">${escapeHtml(entry.item)}</span>
                     <span class="score-display" style="margin-left:auto; font-size:0.9em; color:#4b5563;">
-                      ${entry.score.toFixed(1)}
+                      ${formatScore(entry.score)}
                     </span>
                 </div>
             `
@@ -2515,7 +3237,7 @@ function renderSummaryCards() {
                 (entry, i) => `
                 <div class="method-ranking-item">
                     <span class="rank-badge">${i + 1}</span>
-                    ${entry.item}
+                    <span class="ranking-name">${escapeHtml(entry.item)}</span>
                     <span class="score-display" style="margin-left:auto; font-size:0.9em; color:#4b5563;">
                       ±${entry.range}
                     </span>
@@ -2552,6 +3274,85 @@ function setConsistencyMode(mode) {
   renderSummaryCards();
 }
 
+function buildDecisionInsights(analysis, robustMethods) {
+  const consensus = analysis.consensus || [];
+  const consistency = analysis.consistency || [];
+  const completed = robustMethods.length;
+  const itemCount = state.items.length;
+  const strongest = consensus[0]?.item || "No top choice yet";
+  const robust = consistency
+    .filter((entry) => entry.range <= 1)
+    .slice(0, 3)
+    .map((entry) => entry.item);
+  const sensitive = consistency
+    .slice()
+    .filter((entry) => entry.range > 0)
+    .sort((a, b) => b.range - a.range)
+    .slice(0, 3)
+    .map((entry) => entry.item);
+  const avgRange =
+    consistency.length > 0
+      ? consistency.reduce((sum, entry) => sum + entry.range, 0) /
+        consistency.length
+      : 0;
+  const confidence =
+    completed >= 4 && avgRange <= 1
+      ? "High"
+      : completed >= 3 && avgRange <= Math.max(1, itemCount / 4)
+      ? "Medium"
+      : "Early";
+
+  return {
+    strongest,
+    robust,
+    sensitive,
+    confidence,
+    coverage: `${completed} of ${Object.keys(METHOD_LABELS).length} methods completed`,
+  };
+}
+
+function renderDecisionInsights(analysis, robustMethods) {
+  const container = document.getElementById("decisionInsightsArea");
+  if (!container) return;
+
+  const insights = buildDecisionInsights(analysis, robustMethods);
+  const methodExplanations = robustMethods
+    .map((method) => {
+      const guidance = METHOD_GUIDANCE[method];
+      return guidance
+        ? `<li><strong>${escapeHtml(getMethodLabel(method))}:</strong> ${escapeHtml(guidance.use)}</li>`
+        : "";
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="insight-card">
+      <span class="insight-label">Likely top choice</span>
+      <h3>${escapeHtml(insights.strongest)}</h3>
+      <p>Consensus score combines the rank position from every completed method.</p>
+    </div>
+    <div class="insight-card">
+      <span class="insight-label">Most robust choices</span>
+      <h3>${insights.robust.length ? escapeHtml(insights.robust.join(", ")) : "Still emerging"}</h3>
+      <p>These options stayed close to the same rank across methods.</p>
+    </div>
+    <div class="insight-card">
+      <span class="insight-label">Method-sensitive choices</span>
+      <h3>${insights.sensitive.length ? escapeHtml(insights.sensitive.join(", ")) : "No major swings yet"}</h3>
+      <p>Review these if your decision depends on the ranking method.</p>
+    </div>
+    <div class="insight-card">
+      <span class="insight-label">Confidence</span>
+      <h3>${escapeHtml(insights.confidence)}</h3>
+      <p>${escapeHtml(insights.coverage)}. Add another method if the top choices still feel close.</p>
+    </div>
+    <div class="insight-card insight-card-wide">
+      <span class="insight-label">Why methods can disagree</span>
+      <ul>${methodExplanations}</ul>
+    </div>
+  `;
+}
+
 function renderAggregatedResultsTable(analysis, robustMethods) {
   const container = document.getElementById("aggregatedResultsTable");
   if (!container) return;
@@ -2564,7 +3365,7 @@ function renderAggregatedResultsTable(analysis, robustMethods) {
         <th>Item</th>
         <th>Consensus</th>
         ${robustMethods
-          .map((methodName) => `<th>${methodName.toUpperCase()}</th>`)
+          .map((methodName) => `<th>${escapeHtml(getMethodLabel(methodName))}</th>`)
           .join("")}
       </tr>
     </thead>
@@ -2573,7 +3374,7 @@ function renderAggregatedResultsTable(analysis, robustMethods) {
   const rows = consensusList
     .map((entry) => {
       const item = entry.item;
-      const consensusScore = entry.score.toFixed(1);
+      const consensusScore = formatScore(entry.score);
 
       const cells = robustMethods
         .map((methodName) => {
@@ -2586,7 +3387,7 @@ function renderAggregatedResultsTable(analysis, robustMethods) {
 
           const score = methodData.scores ? methodData.scores[item] : null;
           const displayRank = rankEntry ? `#${rankEntry.rank}` : "–";
-          const displayScore = score != null ? ` (${score.toFixed(1)})` : "";
+          const displayScore = score != null ? ` (${formatScore(score)})` : "";
 
           return `<td>${displayRank}${displayScore}</td>`;
         })
@@ -2594,8 +3395,8 @@ function renderAggregatedResultsTable(analysis, robustMethods) {
 
       return `
         <tr>
-          <th>${item}</th>
-          <td>${consensusScore}</td>
+          <th>${escapeHtml(item)}</th>
+          <td>${escapeHtml(consensusScore)}</td>
           ${cells}
         </tr>
       `;
@@ -2619,13 +3420,11 @@ function renderAggregatedResultsTable(analysis, robustMethods) {
 }
 
 function renderCompareResults() {
+  normalizeProjectState();
   const analysis = analyzeRankings();
 
   // Filter only methods that have the new robust structure
-  const robustMethods = Object.keys(state.completedMethods).filter((method) => {
-    const data = state.completedMethods[method];
-    return typeof data === "object" && data.rankedList && data.scores;
-  });
+  const robustMethods = getCompletedMethodNames();
 
   if (robustMethods.length === 0) {
     document.getElementById("summaryAndVolatilityArea").innerHTML =
@@ -2642,6 +3441,21 @@ function renderCompareResults() {
   comparisonState.robustMethods = robustMethods;
   comparisonState.consistencyMode = state.consistencyMode;
   renderSummaryCards();
+  renderDecisionInsights(analysis, robustMethods);
+
+  const summaryTitle = document.getElementById("decisionSummaryTitle");
+  if (summaryTitle) {
+    summaryTitle.textContent = getDecisionTitle("Decision summary");
+  }
+
+  const decisionNoteInput = document.getElementById("decisionNoteInput");
+  if (decisionNoteInput) {
+    decisionNoteInput.value = state.project.decisionNote || "";
+    decisionNoteInput.oninput = () => {
+      state.project.decisionNote = decisionNoteInput.value;
+      saveState();
+    };
+  }
 
   // --- B. Build Individual Method Cards (Detailed Rank Grid) ---
   const detailedGridArea = document.getElementById("detailedRankGrid");
@@ -2658,42 +3472,60 @@ function renderCompareResults() {
 
       return `
             <div class="method-results-card">
-                <h3>${method.toUpperCase()}</h3>
+                <h3>${escapeHtml(getMethodLabel(method))}</h3>
                 <p style="color: #6b7280; font-size: 0.9em; margin-bottom: 0.5rem;">
-                    Score: ${scoreTypeDisplay}
+                    Score: ${escapeHtml(scoreTypeDisplay)}
                 </p>
                 ${rankedItemsWithTies
                   .map(
                     (rankedItem) => `
                     <div class="method-ranking-item">
                         <span class="rank-badge">${rankedItem.rank}</span> 
-                        ${rankedItem.item}
+                        <span class="ranking-name">${escapeHtml(rankedItem.item)}</span>
                         <span style="margin-left: auto; font-size: 0.9em; color: #4b5563;">
-                            ${rankedItem.score.toFixed(1)}
+                            ${formatScore(rankedItem.score)}
                         </span>
                     </div>
                 `
                   )
                   .join("")}
+                <label class="method-note-label" for="methodNote-${method}">
+                  Reflection note
+                </label>
+                <textarea
+                  id="methodNote-${method}"
+                  class="method-note-input"
+                  data-method-note="${method}"
+                  rows="3"
+                  placeholder="Why did this method feel right or wrong?"
+                >${escapeHtml(state.project.methodNotes[method] || "")}</textarea>
             </div>
         `;
     })
     .join("");
 
   detailedGridArea.innerHTML = methodCards;
+  detailedGridArea
+    .querySelectorAll("[data-method-note]")
+    .forEach((input) => {
+      input.addEventListener("input", () => {
+        state.project.methodNotes[input.dataset.methodNote] = input.value;
+        saveState();
+      });
+    });
 
   // --- C. Create Visualizations ---
   createVisualizations(analysis, robustMethods);
   createHeatmap(analysis, robustMethods);
   renderAggregatedResultsTable(analysis, robustMethods);
 
-  lucide.createIcons();
+  refreshIcons();
 }
 
 function openCompareResults() {
-  const completedCount = Object.keys(state.completedMethods || {}).length;
+  const completedCount = getCompletedMethodCount();
   if (completedCount < 2) {
-    showNotification("Complete at least 2 ranking methods to compare results.");
+    showNotification("Complete at least 2 ranking methods to review the decision summary.");
     return;
   }
 
@@ -2722,6 +3554,12 @@ document
 
 // --- KEYBOARD SHORTCUTS (UPDATED) ---
 document.addEventListener("keydown", (e) => {
+  const shareDialog = document.getElementById("shareDialog");
+  if (e.key === "Escape" && shareDialog && !shareDialog.classList.contains("hidden")) {
+    closeShareDialog();
+    return;
+  }
+
   // PAIRWISE SHORTCUTS
   if (state.screen === "pairwise" && state.currentPair) {
     if (e.key === "ArrowLeft") {
@@ -2769,15 +3607,15 @@ function renderTemplateCategories() {
   const container = document.getElementById("templateButtonsContainer");
   if (!container) return;
   container.innerHTML = `
-      <label class="form-label">Choose a template:</label>
+      <label class="form-label">Choose a decision starter:</label>
       <div class="template-category-scroll">
         ${templateData.categories
           .map(
             (cat) => `
-          <div class="template-category-card" data-category-id="${cat.id}">
-            <div class="icon">${cat.icon}</div>
-            <div class="description">${cat.description}</div>
-            <div class="name">${cat.name}</div>
+          <div class="template-category-card" data-category-id="${cat.id}" role="button" tabindex="0">
+            <div class="icon">${escapeHtml(cat.icon)}</div>
+            <div class="description">${escapeHtml(cat.description)}</div>
+            <div class="name">${escapeHtml(cat.name)}</div>
           </div>
         `
           )
@@ -2789,24 +3627,36 @@ function renderTemplatesForCategory(catId) {
   const container = document.getElementById("templateButtonsContainer");
   const templates = templateData.templates.filter((t) => t.category === catId);
   container.innerHTML = `
-        <button class="btn btn-icon" onclick="renderTemplateCategories()">⬅ Back</button>
+        <button class="btn btn-icon" id="templateBackBtn">Back</button>
         <div class="template-item-grid">
             ${templates
               .map(
                 (t) => `
-                <div class="template-item-card" onclick="loadTemplate('${
-                  t.id
-                }')">
-                    <div class="name">${t.name}</div>
-                    <div class="description">${t.items
-                      .slice(0, 3)
-                      .join(", ")}...</div>
+                <div class="template-item-card" data-template-id="${escapeHtml(t.id)}" role="button" tabindex="0">
+                    <div class="name">${escapeHtml(t.name)}</div>
+                    <div class="description">${
+                      t.items.length
+                        ? escapeHtml(t.items.slice(0, 3).join(", ")) +
+                          (t.items.length > 3 ? "..." : "")
+                        : "Start with an empty list."
+                    }</div>
                 </div>
             `
               )
               .join("")}
         </div>
     `;
+  document.getElementById("templateBackBtn").onclick = renderTemplateCategories;
+  container.querySelectorAll(".template-item-card").forEach((card) => {
+    const selectTemplate = () => window.loadTemplate(card.dataset.templateId);
+    card.addEventListener("click", selectTemplate);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        selectTemplate();
+      }
+    });
+  });
 }
 
 window.loadTemplate = (id) => {
@@ -2818,12 +3668,26 @@ window.loadTemplate = (id) => {
   const itemsInput = document.getElementById("itemsInput");
   if (!itemsInput) return;
   itemsInput.value = t.items.join(", ");
+  const titleInput = document.getElementById("decisionTitleInput");
+  if (titleInput && !titleInput.value.trim() && t.id !== "blank") {
+    titleInput.value = t.name;
+  }
+  updateItemsPreview(itemsInput.value);
+  syncDecisionInputs();
+  clearInputError();
 };
 
 // Event Delegation for Templates
 document.addEventListener("click", (e) => {
   const card = e.target.closest(".template-category-card");
   if (card) renderTemplatesForCategory(card.dataset.categoryId);
+});
+
+document.addEventListener("keydown", (e) => {
+  const card = e.target.closest(".template-category-card");
+  if (!card || (e.key !== "Enter" && e.key !== " ")) return;
+  e.preventDefault();
+  renderTemplatesForCategory(card.dataset.categoryId);
 });
 
 // --- UTILS ---
@@ -2873,6 +3737,15 @@ document.addEventListener("DOMContentLoaded", () => {
     updateItemsPreview(itemsInput.value);
   }
 
+  ["decisionTitleInput", "itemNotesInput"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      syncDecisionInputs();
+      if (state.itemsSubmitted) showItemsDisplay();
+    });
+  });
+
   // tournament reset button
   const resetBtn = document.getElementById("tournamentResetBtn");
   if (resetBtn) {
@@ -2884,6 +3757,34 @@ document.addEventListener("DOMContentLoaded", () => {
   if (exportBtn) {
     exportBtn.onclick = exportComparisonData;
   }
+
+  const exportProjectBtn = document.getElementById("exportProjectBtn");
+  if (exportProjectBtn) {
+    exportProjectBtn.onclick = exportProjectData;
+  }
+
+  const homeExportProjectBtn = document.getElementById("homeExportProjectBtn");
+  if (homeExportProjectBtn) {
+    homeExportProjectBtn.onclick = exportProjectData;
+  }
+
+  const copyProjectJsonBtn = document.getElementById("copyProjectJsonBtn");
+  if (copyProjectJsonBtn) {
+    copyProjectJsonBtn.onclick = () => {
+      const text = JSON.stringify(buildProjectExport(), null, 2);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => showNotification("Project JSON copied."),
+          () => showNotification("Could not copy project JSON.", 3500)
+        );
+      } else {
+        showNotification("Clipboard access is unavailable.", 3500);
+      }
+    };
+  }
+
+  setupProjectImportInput(document.getElementById("importProjectInput"));
+  setupProjectImportInput(document.getElementById("homeImportProjectInput"));
 
   document.getElementById("backBtn").addEventListener("click", () => {
     if (state.screen === "drag") {
@@ -2902,6 +3803,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("clearBtn").addEventListener("click", clearState);
   document.getElementById("shareBtn").addEventListener("click", openShareDialog);
   document.getElementById("shareDialogClose").addEventListener("click", closeShareDialog);
+  document.getElementById("shareDialog").addEventListener("click", (e) => {
+    if (e.target.id === "shareDialog") closeShareDialog();
+  });
   document.getElementById("copyShareLinkBtn").addEventListener("click", copyShareLink);
 
   // Load shared state if provided via URL
